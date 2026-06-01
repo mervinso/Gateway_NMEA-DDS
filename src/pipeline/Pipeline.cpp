@@ -35,7 +35,31 @@ struct DdsCtx {
 
     DomainParticipant* participant{nullptr};
     Publisher*         publisher{nullptr};
+    Pipeline::QosSettings qos{};  // perfil aplicado a cada DataWriter (D8)
     std::unordered_map<std::string, WriterEntry> writers;  // key = formatter o "raw"
+
+    // Traduce QosSettings neutrales a un DataWriterQos de Fast DDS.
+    DataWriterQos build_writer_qos() const {
+        DataWriterQos wq = DATAWRITER_QOS_DEFAULT;
+        wq.reliability().kind = qos.reliable ? RELIABLE_RELIABILITY_QOS
+                                             : BEST_EFFORT_RELIABILITY_QOS;
+        if (qos.transient_local) {
+            wq.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+            wq.history().kind    = KEEP_LAST_HISTORY_QOS;
+            wq.history().depth   = 1;
+        } else {
+            wq.durability().kind = VOLATILE_DURABILITY_QOS;
+        }
+        if (qos.deadline_ms > 0) {
+            wq.deadline().period = Duration_t(qos.deadline_ms / 1000,
+                    static_cast<uint32_t>((qos.deadline_ms % 1000) * 1000000));
+        }
+        if (qos.lifespan_ms > 0) {
+            wq.lifespan().duration = Duration_t(qos.lifespan_ms / 1000,
+                    static_cast<uint32_t>((qos.lifespan_ms % 1000) * 1000000));
+        }
+        return wq;
+    }
 
     // Devuelve la entrada completa (incluye dyn_type para crear DynamicData).
     WriterEntry* get_entry(const std::string& key) {
@@ -69,7 +93,7 @@ struct DdsCtx {
                 info.topic_name, info.type_name, TOPIC_QOS_DEFAULT);
         if (!entry.topic) return nullptr;
 
-        entry.writer = publisher->create_datawriter(entry.topic, DATAWRITER_QOS_DEFAULT);
+        entry.writer = publisher->create_datawriter(entry.topic, build_writer_qos());
         if (!entry.writer) {
             participant->delete_topic(entry.topic);
             return nullptr;
@@ -122,6 +146,7 @@ std::string Pipeline::error_message() const { return error_msg_; }
 void Pipeline::worker_loop() {
     // ── DDS setup ──────────────────────────────────────────────────────────
     DdsCtx ctx;
+    ctx.qos = cfg_.qos;
     if (cfg_.publish_to_dds) {
         ctx.participant = DomainParticipantFactory::get_instance()
                 ->create_participant(cfg_.domain_id, PARTICIPANT_QOS_DEFAULT);

@@ -20,6 +20,16 @@ class Pipeline {
 public:
     enum class State { Stopped, Running, Error };
 
+    // Ajustes QoS neutrales (sin dependencia de Fast DDS ni de la UI) que el
+    // worker traduce a DataWriterQos al crear cada DataWriter (D8).
+    // deadline_ms / lifespan_ms == 0 ⇒ infinito (no se fija la política).
+    struct QosSettings {
+        bool reliable{false};         // false=BEST_EFFORT, true=RELIABLE
+        bool transient_local{false};  // false=VOLATILE, true=TRANSIENT_LOCAL (keep_last 1)
+        int  deadline_ms{0};
+        int  lifespan_ms{0};
+    };
+
     struct Config {
         std::string              device_id;    // @key DDS (D3)
         std::unique_ptr<ISource> source;       // propiedad exclusiva (D9)
@@ -29,6 +39,9 @@ public:
         // Si false, el worker parsea y cuenta pero no crea DataWriters ni publica.
         // Usado por GatewayController en modo preview (detección sin DDS).
         bool publish_to_dds{true};
+
+        // Perfil QoS aplicado a cada DataWriter creado (D8).
+        QosSettings qos{};
 
         // Callback opcional invocado desde el hilo worker por cada sentencia válida.
         // Los strings son copias seguras (no string_view). Puede ser nullptr.

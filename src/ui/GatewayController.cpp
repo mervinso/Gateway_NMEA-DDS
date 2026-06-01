@@ -87,8 +87,7 @@ void GatewayController::stopPreview() {
 
 void GatewayController::launchConversion(const QString& source, int baud,
                                           const QString& deviceId, int domainId,
-                                          const QoSProfile& /*qos*/) {
-    // TODO: aplicar qos al DataWriterQos cuando Pipeline soporte QoS configurable.
+                                          const QoSProfile& qos) {
     stopPreview();
     auto src = makeSource(source, baud);
     if (!src) return;
@@ -98,6 +97,9 @@ void GatewayController::launchConversion(const QString& source, int baud,
     cfg.registry       = &registry_;
     cfg.domain_id      = domainId;
     cfg.publish_to_dds = true;
+    // Aplica el perfil QoS elegido en la UI al DataWriter (D8).
+    cfg.qos = nmea::Pipeline::QosSettings{
+        qos.reliable, qos.transient_local, qos.deadline_ms, qos.lifespan_ms};
     auto pipeline = std::make_unique<nmea::Pipeline>(std::move(cfg));
     pipeline->start();
     pipelines_[deviceId.toStdString()] = std::move(pipeline);
