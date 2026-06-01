@@ -214,7 +214,9 @@ void Pipeline::worker_loop() {
                                         ->create_data(entry->dyn_type);
                     if (!data) continue;
                     mapper.populate(data, sv, cfg_.device_id);
-                    (void)w;  // TODO: w->write(data.get()) — bug Fast DDS 3.6 pendiente
+                    // write() recibe la DIRECCIÓN del _ref_type (shared_ptr), NO data.get():
+                    // DynamicPubSubType reinterpreta el void* como DynamicData::_ref_type*.
+                    w->write(&data);
                 }
             } else if (r == ParseResult::ChecksumError) {
                 ++err_;

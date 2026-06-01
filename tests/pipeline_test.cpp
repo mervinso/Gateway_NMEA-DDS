@@ -216,17 +216,27 @@ TEST(Pipeline, PublishesDataToDds) {
     pipeline.start();
     ASSERT_TRUE(wait_for_state(pipeline, Pipeline::State::Running));
 
-    // Dar tiempo a que escritor y lector se descubran (SPDP/SEDP).
-    // Enviamos una sentencia para forzar la creación lazy del DataWriter.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    pty.write(kGga);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Enviar sentencias repetidamente mientras intentamos leer: cubre el
+    // tiempo de descubrimiento (SPDP/SEDP) y la entrega de la muestra.
+    DynamicData::_ref_type sample = DynamicDataFactory::get_instance()->create_data(gga_type);
+    SampleInfo info;
+    bool received = false;
+    std::string device_id;
 
-    // Verificar que el pipeline está en Running y contó la sentencia
-    // (lo que implica que el DataWriter fue creado exitosamente).
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline && !received) {
+        pty.write(kGga);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (reader->take_next_sample(&sample, &info) == RETCODE_OK && info.valid_data) {
+            sample->get_string_value(device_id, sample->get_member_id_by_name("device_id"));
+            received = true;
+        }
+    }
+
     EXPECT_EQ(pipeline.state(), Pipeline::State::Running);
-    EXPECT_GE(pipeline.sentences_ok(), 1u)
-        << "Pipeline no procesó la sentencia — DataWriter no creado";
+    EXPECT_GE(pipeline.sentences_ok(), 1u);
+    EXPECT_TRUE(received) << "El suscriptor no recibió ninguna muestra DDS";
+    EXPECT_EQ(device_id, "test_gps") << "device_id incorrecto en la muestra recibida";
 
     pipeline.stop();
 
