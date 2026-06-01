@@ -58,6 +58,6 @@ private:
 };
 
 // Devuelve el nombre en texto de una categoría: "GPS", "Weather", etc.
-std::string category_name(Category c) noexcept;
+const char* category_name(Category c) noexcept;
 
 }  // namespace nmea

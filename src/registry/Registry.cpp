@@ -364,7 +364,7 @@ void Registry::add(SentenceDef def) {
     defs_.insert_or_assign(key, std::move(def));
 }
 
-std::string category_name(Category c) noexcept {
+const char* category_name(Category c) noexcept {
     switch (c) {
         case Category::GPS:      return "GPS";
         case Category::Weather:  return "Weather";
