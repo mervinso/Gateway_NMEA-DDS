@@ -1,0 +1,9 @@
+# Build
+/build/
+/build_asan/
+*.o
+*.a
+
+
+# Tooling local de agentes
+/.agents/
