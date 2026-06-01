@@ -138,3 +138,26 @@ TEST(Parser, OverflowsThenRecovers) {
     ASSERT_EQ(feed(p, gga), ParseResult::Complete);
     EXPECT_EQ(p.sentence().address, "GPGGA");
 }
+
+TEST(Parser, ParsesAisEncapsulationSentenceWithBangDelimiter) {
+    Parser p;
+    // Sentencia de encapsulación AIS (delimitador '!'), capturada del simulador.
+    // NMEA 0183 admite '!' como inicio de frame igual que '$' (mismo checksum XOR).
+    constexpr std::string_view vdm =
+        "!AIVDM,1,1,,A,17PaewhP2HrEre646EiEm4cl0000,0*6A\r\n";
+
+    ASSERT_EQ(feed(p, vdm), ParseResult::Complete);
+    EXPECT_EQ(p.sentence().address, "AIVDM");
+    ASSERT_EQ(p.sentence().fields.size(), 6u);
+    EXPECT_EQ(p.sentence().fields[0], "1");                              // total
+    EXPECT_EQ(p.sentence().fields[4], "17PaewhP2HrEre646EiEm4cl0000");   // payload
+}
+
+TEST(Parser, ResyncsOnBangAfterGarbage) {
+    Parser p;
+    // Un '!' a mitad de ruido debe reiniciar el frame igual que '$'.
+    constexpr std::string_view stream =
+        "garbage!AIVDO,1,1,,A,17PaewhP2HrEre646EiEm4cl0000,0*68\r\n";
+    ASSERT_EQ(feed(p, stream), ParseResult::Complete);
+    EXPECT_EQ(p.sentence().address, "AIVDO");
+}

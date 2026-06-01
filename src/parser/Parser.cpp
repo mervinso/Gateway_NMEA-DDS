@@ -34,8 +34,10 @@ ParseResult Parser::finalize() noexcept {
 }
 
 ParseResult Parser::consume(char byte) noexcept {
-    // '$' siempre reinicia el frame (resincronización determinista ante ruido/truncados).
-    if (byte == '$') {
+    // '$' (paramétricas) y '!' (encapsulación AIS VDM/VDO) inician/resincronizan
+    // el frame. NMEA 0183 admite ambos delimitadores; el checksum XOR excluye el
+    // delimitador en los dos casos (igual lógica, ya que reset() empieza tras él).
+    if (byte == '$' || byte == '!') {
         reset();
         state_ = State::Body;
         return ParseResult::Incomplete;
