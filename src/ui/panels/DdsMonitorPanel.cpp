@@ -66,7 +66,7 @@ void DdsMonitorPanel::onScanClicked() {
 }
 
 void DdsMonitorPanel::onDiagClicked() {
-    diag_label_->setText("Ejecutando diagnósticos…");
+    diag_label_->clear();
     ctrl_->runNetworkDiagnostics();
 }
 
@@ -80,7 +80,7 @@ void DdsMonitorPanel::onNetworkDiagResult(QString check, bool ok, QString detail
     const QString color = ok ? "#4ade80" : "#ef4444";
     const QString line = QString("<span style='color:%1'>%2 %3</span>: %4")
                          .arg(color, icon, check, detail);
-    diag_label_->setText(diag_label_->text() == "— sin diagnósticos —"
+    diag_label_->setText(diag_label_->text().isEmpty()
                          ? line
                          : diag_label_->text() + "<br>" + line);
     diag_label_->setTextFormat(Qt::RichText);

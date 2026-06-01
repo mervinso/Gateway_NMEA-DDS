@@ -6,6 +6,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
+#include <QApplication>
+#include <QPointer>
 #include <QSerialPortInfo>
 #include <thread>
 
@@ -105,20 +107,22 @@ void InterfacesPanel::onAutoDetect() {
     // Corre BaudDetector en hilo aparte (std::thread) para no bloquear la UI;
     // el resultado se reencola al hilo Qt vía QMetaObject::invokeMethod.
     const std::string path = src.toStdString();
-    std::thread([this, path]() {
+    QPointer<InterfacesPanel> guard(this);
+    std::thread([guard, path]() {
         const int detected = nmea::BaudDetector::detect(path, 500);
-        QMetaObject::invokeMethod(this, [this, detected]() {
+        QMetaObject::invokeMethod(qApp, [guard, detected]() {
+            if (!guard) return;  // panel destruido mientras detectaba
             if (detected > 0) {
-                const int idx = baud_combo_->findData(detected);
-                if (idx >= 0) baud_combo_->setCurrentIndex(idx);
-                status_label_->setText(QString("Baud detectado: %1").arg(detected));
-                status_label_->setObjectName("lbl_ok");
+                const int idx = guard->baud_combo_->findData(detected);
+                if (idx >= 0) guard->baud_combo_->setCurrentIndex(idx);
+                guard->status_label_->setText(QString("Baud detectado: %1").arg(detected));
+                guard->status_label_->setObjectName("lbl_ok");
             } else {
-                status_label_->setText("No se detectó baud válido");
-                status_label_->setObjectName("lbl_warn");
+                guard->status_label_->setText("No se detectó baud válido");
+                guard->status_label_->setObjectName("lbl_warn");
             }
-            autodetect_btn_->setEnabled(true);
-            autodetect_btn_->setText("⚙ Auto-detect");
+            guard->autodetect_btn_->setEnabled(true);
+            guard->autodetect_btn_->setText("⚙ Auto-detect");
         }, Qt::QueuedConnection);
     }).detach();
 }

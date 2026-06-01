@@ -53,7 +53,7 @@ private:
     std::map<std::string, std::unique_ptr<nmea::Pipeline>> pipelines_;
     QTimer* poll_timer_;
 
-    struct RateTracker { quint64 last_count{0}; double rate_hz{0.0}; };
+    struct RateTracker { quint64 last_count{0}; quint64 prev_count{0}; double rate_hz{0.0}; };
     std::map<std::string, RateTracker> rate_trackers_;
 };
 

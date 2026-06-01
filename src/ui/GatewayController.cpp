@@ -88,6 +88,7 @@ void GatewayController::stopPreview() {
 void GatewayController::launchConversion(const QString& source, int baud,
                                           const QString& deviceId, int domainId,
                                           const QoSProfile& /*qos*/) {
+    // TODO: aplicar qos al DataWriterQos cuando Pipeline soporte QoS configurable.
     stopPreview();
     auto src = makeSource(source, baud);
     if (!src) return;
@@ -115,6 +116,10 @@ void GatewayController::pollPipelines() {
         const int state = static_cast<int>(p->state());
         emit conversionStateChanged(QString::fromStdString(id),
                                     state, p->sentences_ok());
+    }
+    for (auto& [fmt, rt] : rate_trackers_) {
+        rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
+        rt.prev_count = rt.last_count;
     }
 }
 
