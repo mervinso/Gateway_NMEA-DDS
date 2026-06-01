@@ -6,12 +6,57 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cstdlib>
+#include <functional>
+
+#include <fastdds/dds/domain/DomainParticipant.hpp>
+#include <fastdds/dds/domain/DomainParticipantFactory.hpp>
+#include <fastdds/dds/domain/DomainParticipantListener.hpp>
+#include <fastdds/dds/builtin/topic/PublicationBuiltinTopicData.hpp>
+#include <fastdds/dds/builtin/topic/SubscriptionBuiltinTopicData.hpp>
+#include <fastdds/rtps/writer/WriterDiscoveryStatus.hpp>
+#include <fastdds/rtps/reader/ReaderDiscoveryStatus.hpp>
 
 #include "capture/SerialSource.hpp"
 #include "capture/TcpSource.hpp"
 
 namespace nmea::ui {
+
+// Listener de descubrimiento DDS. Los callbacks corren en hilos de Fast DDS:
+// solo invocan `cb` (un std::function neutral); el marshalling a Qt lo hace
+// GatewayController dentro de `cb`.
+class MonitorListener : public eprosima::fastdds::dds::DomainParticipantListener {
+public:
+    // (isWriter, added, topic, type)
+    std::function<void(bool, bool, std::string, std::string)> cb;
+
+    void on_data_writer_discovery(
+            eprosima::fastdds::dds::DomainParticipant*,
+            eprosima::fastdds::rtps::WriterDiscoveryStatus reason,
+            const eprosima::fastdds::dds::PublicationBuiltinTopicData& info,
+            bool& should_be_ignored) override {
+        should_be_ignored = false;
+        using WDS = eprosima::fastdds::rtps::WriterDiscoveryStatus;
+        if (reason == WDS::DISCOVERED_WRITER || reason == WDS::REMOVED_WRITER) {
+            if (cb) cb(true, reason == WDS::DISCOVERED_WRITER,
+                       info.topic_name.c_str(), info.type_name.c_str());
+        }
+    }
+
+    void on_data_reader_discovery(
+            eprosima::fastdds::dds::DomainParticipant*,
+            eprosima::fastdds::rtps::ReaderDiscoveryStatus reason,
+            const eprosima::fastdds::dds::SubscriptionBuiltinTopicData& info,
+            bool& should_be_ignored) override {
+        should_be_ignored = false;
+        using RDS = eprosima::fastdds::rtps::ReaderDiscoveryStatus;
+        if (reason == RDS::DISCOVERED_READER || reason == RDS::REMOVED_READER) {
+            if (cb) cb(false, reason == RDS::DISCOVERED_READER,
+                       info.topic_name.c_str(), info.type_name.c_str());
+        }
+    }
+};
 
 GatewayController::GatewayController(QObject* parent)
     : QObject(parent)
@@ -24,6 +69,7 @@ GatewayController::GatewayController(QObject* parent)
 
 GatewayController::~GatewayController() {
     stopPreview();
+    stopScan();
     for (auto& [id, p] : pipelines_) p->stop();
 }
 
@@ -164,11 +210,49 @@ void GatewayController::runNetworkDiagnostics() {
     }
 }
 
-void GatewayController::scanDomain(int /*domainId*/) {
-    emit networkDiagResult("Escaneo DDS", true,
-                           "Descubrimiento activo — los tópicos aparecerán al conectarse");
+void GatewayController::scanDomain(int domainId) {
+    using namespace eprosima::fastdds::dds;
+    stopScan();
+    topic_agg_.clear();
+    monitor_domain_ = domainId;
+
+    monitor_listener_ = std::make_unique<MonitorListener>();
+    monitor_listener_->cb = [this](bool isWriter, bool added,
+                                    std::string topic, std::string type) {
+        QMetaObject::invokeMethod(this, [this, isWriter, added, topic, type]() {
+            auto& agg = topic_agg_[topic];
+            if (!type.empty()) agg.typeName = type;
+            const int delta = added ? 1 : -1;
+            if (isWriter) agg.pub = std::max(0, agg.pub + delta);
+            else          agg.sub = std::max(0, agg.sub + delta);
+            emit ddsTopicDiscovered(monitor_domain_,
+                    QString::fromStdString(topic),
+                    QString::fromStdString(agg.typeName),
+                    agg.pub, agg.sub);
+        }, Qt::QueuedConnection);
+    };
+
+    monitor_participant_ = DomainParticipantFactory::get_instance()->create_participant(
+            domainId, PARTICIPANT_QOS_DEFAULT, monitor_listener_.get(), StatusMask::none());
+
+    if (!monitor_participant_) {
+        monitor_listener_.reset();
+        emit networkDiagResult("Monitor DDS", false,
+                QString("No se pudo crear participante en dominio %1").arg(domainId));
+        return;
+    }
+    emit networkDiagResult("Monitor DDS", true,
+            QString("Escuchando dominio %1…").arg(domainId));
 }
 
-void GatewayController::stopScan() {}
+void GatewayController::stopScan() {
+    if (monitor_participant_) {
+        eprosima::fastdds::dds::DomainParticipantFactory::get_instance()
+                ->delete_participant(monitor_participant_);
+        monitor_participant_ = nullptr;
+    }
+    monitor_listener_.reset();
+    topic_agg_.clear();
+}
 
 }  // namespace nmea::ui

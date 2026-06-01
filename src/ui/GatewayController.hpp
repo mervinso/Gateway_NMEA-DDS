@@ -13,7 +13,11 @@
 #include "registry/Registry.hpp"
 #include "ui/QoSRecommender.hpp"
 
+namespace eprosima::fastdds::dds { class DomainParticipant; }
+
 namespace nmea::ui {
+
+class MonitorListener;  // definido en el .cpp
 
 class GatewayController : public QObject {
     Q_OBJECT
@@ -55,6 +59,13 @@ private:
 
     struct RateTracker { quint64 last_count{0}; quint64 prev_count{0}; double rate_hz{0.0}; };
     std::map<std::string, RateTracker> rate_trackers_;
+
+    // Monitor DDS: participante de solo-descubrimiento por dominio.
+    eprosima::fastdds::dds::DomainParticipant* monitor_participant_{nullptr};
+    std::unique_ptr<MonitorListener> monitor_listener_;
+    struct TopicAgg { std::string typeName; int pub{0}; int sub{0}; };
+    std::map<std::string, TopicAgg> topic_agg_;
+    int monitor_domain_{0};
 };
 
 }  // namespace nmea::ui
