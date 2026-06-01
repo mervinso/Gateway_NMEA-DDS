@@ -78,12 +78,10 @@ struct DdsCtx {
                 : mapper.type_for(info.formatter);
 
         // TypeSupport toma ownership compartido (es un shared_ptr).
-        // Deshabilitamos compute_key: workaround para Fast DDS 3.6 que llama
-        // calculate_key_serialized_size incluso en tipos sin @key declarado,
-        // causando SEGV con DynamicData. El key DDS se gestiona fuera (D3/D5).
-        auto* pub_type_ptr = new DynamicPubSubType(dyn_type);
-        pub_type_ptr->is_compute_key_provided = false;
-        TypeSupport ts(pub_type_ptr);
+        // device_id es @key (D3/D5): dejamos que Fast DDS compute la clave de
+        // instancia. (El SEGV histórico era por pasar data.get() a write() en vez
+        // de &data, no por el key — ya corregido.)
+        TypeSupport ts(new DynamicPubSubType(dyn_type));
         participant->register_type(ts, info.type_name);
 
         WriterEntry entry;

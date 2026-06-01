@@ -96,12 +96,10 @@ void add_member(DynamicTypeBuilder::_ref_type& builder,
 }
 
 // Agrega la cabecera común a todos los tipos.
-// Nota: device_id es semánticamente @key (D3/D5) pero Fast DDS 3.x tiene limitaciones
-// con string keys en DynamicData; se mapea a TK_INT64 hash para el key DDS y se
-// preserva el string original en device_id_str.
+// device_id es el @key DDS (D3/D5): identifica la instancia por dispositivo.
 void add_common_header(DynamicTypeBuilder::_ref_type& builder) {
     auto str = string_type();
-    add_member(builder, "device_id",       str,                   /*is_key=*/false);
+    add_member(builder, "device_id",       str,                   /*is_key=*/true);
     add_member(builder, "talker",          str);
     add_member(builder, "recv_timestamp",  primitive(TK_INT64));
 }
