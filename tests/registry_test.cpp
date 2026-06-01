@@ -72,4 +72,31 @@ TEST(Registry, BuiltinCoversAllCategories) {
     EXPECT_NE(reg.lookup("DBT"),   nullptr);  // Sounder
     EXPECT_NE(reg.lookup("VHW"),   nullptr);  // Velocity
     EXPECT_NE(reg.lookup("VNYMR"), nullptr);  // Inertial (propietario VectorNav)
+    EXPECT_NE(reg.lookup("APB"),   nullptr);  // Autopilot
+    EXPECT_NE(reg.lookup("RPM"),   nullptr);  // Engine
+    EXPECT_NE(reg.lookup("VDM"),   nullptr);  // AIS
+}
+
+TEST(Registry, SimulatorExtraSentencesResolveToTheirCategories) {
+    const Registry reg = Registry::builtin();
+
+    const SentenceDef* apb = reg.lookup("APB");
+    ASSERT_NE(apb, nullptr);
+    EXPECT_EQ(apb->category, Category::Autopilot);
+
+    const SentenceDef* rpm = reg.lookup("RPM");
+    ASSERT_NE(rpm, nullptr);
+    EXPECT_EQ(rpm->category, Category::Engine);
+    EXPECT_EQ(rpm->fields[2].name, "speed");
+    EXPECT_EQ(rpm->fields[2].unit, "rpm");
+
+    // AIS: VDM y VDO comparten estructura (6 campos), categoría AIS.
+    const SentenceDef* vdm = reg.lookup("VDM");
+    const SentenceDef* vdo = reg.lookup("VDO");
+    ASSERT_NE(vdm, nullptr);
+    ASSERT_NE(vdo, nullptr);
+    EXPECT_EQ(vdm->category, Category::AIS);
+    EXPECT_EQ(vdo->category, Category::AIS);
+    ASSERT_EQ(vdm->fields.size(), 6u);
+    EXPECT_EQ(vdm->fields[4].name, "payload");
 }

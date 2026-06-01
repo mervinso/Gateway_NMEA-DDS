@@ -14,6 +14,8 @@ QoSProfile QoSRecommender::recommend(Category category, double rate_hz) noexcept
         case Category::Radar:
         case Category::Sounder:
         case Category::Weather:
+        case Category::Autopilot:   // guía de navegación: entrega fiable
+        case Category::AIS:         // posiciones de buques: último valor a late-joiners
             return {"state_latched", true, true, deadline_ms, lifespan_ms};
 
         case Category::GPS:
@@ -21,6 +23,7 @@ QoSProfile QoSRecommender::recommend(Category category, double rate_hz) noexcept
         case Category::Velocity:
         case Category::Attitude:
         case Category::Inertial:
+        case Category::Engine:      // telemetría periódica del motor
             return {"telemetry_fast", false, false, deadline_ms, lifespan_ms};
     }
     return {"telemetry_fast", false, false, 0, 0};

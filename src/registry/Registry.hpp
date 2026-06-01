@@ -16,6 +16,9 @@ enum class Category {
     Velocity,
     Attitude,
     Inertial,
+    Autopilot,
+    Engine,
+    AIS,
 };
 
 enum class FieldType {

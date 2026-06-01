@@ -341,6 +341,53 @@ static std::vector<SentenceDef> builtinDefs() {
             f64("gyro_y",   "rad/s"),
             f64("gyro_z",   "rad/s"),
         }},
+
+        // ── Autopilot ─────────────────────────────────────────────────────────
+        {"APB", Category::Autopilot, {
+            ch("status_general"),
+            ch("status_cycle_lock"),
+            f64("xte_magnitude",       "nm"),
+            ch("steer_direction"),         // L/R
+            ch("xte_units"),               // N
+            ch("arrival_circle"),          // A
+            ch("perpendicular_passed"),    // A
+            f64("bearing_origin_dest", "deg"),
+            ch("bearing_origin_ref"),      // M/T
+            str("dest_waypoint_id"),
+            f64("bearing_present_dest","deg"),
+            ch("bearing_present_ref"),     // M/T
+            f64("heading_to_steer",    "deg"),
+            ch("heading_to_steer_ref"),    // M/T
+            ch("mode"),
+        }},
+
+        // ── Engine / propulsión ───────────────────────────────────────────────
+        {"RPM", Category::Engine, {
+            ch("source"),          // S=eje, E=motor
+            i32("source_number"),
+            f64("speed",   "rpm"),
+            f64("pitch",   "%"),
+            ch("status"),          // A=válido
+        }},
+
+        // ── AIS (encapsulación, delimitador '!'): VDM=otros buques, VDO=propio ──
+        // address "AIVDM"/"AIVDO" → resolve quita el talker "AI" → "VDM"/"VDO".
+        {"VDM", Category::AIS, {
+            u32("total_sentences"),
+            u32("sentence_number"),
+            u32("sequential_msg_id"),
+            ch("channel"),                 // A/B
+            str("payload"),                // ASCII de 6 bits (mensaje AIS)
+            u32("fill_bits"),
+        }},
+        {"VDO", Category::AIS, {
+            u32("total_sentences"),
+            u32("sentence_number"),
+            u32("sequential_msg_id"),
+            ch("channel"),
+            str("payload"),
+            u32("fill_bits"),
+        }},
     };
 }
 
@@ -371,9 +418,12 @@ const char* category_name(Category c) noexcept {
         case Category::Heading:  return "Heading";
         case Category::Radar:    return "Radar";
         case Category::Sounder:  return "Sounder";
-        case Category::Velocity: return "Velocity";
-        case Category::Attitude: return "Attitude";
-        case Category::Inertial: return "Inertial";
+        case Category::Velocity:  return "Velocity";
+        case Category::Attitude:  return "Attitude";
+        case Category::Inertial:  return "Inertial";
+        case Category::Autopilot: return "Autopilot";
+        case Category::Engine:    return "Engine";
+        case Category::AIS:       return "AIS";
     }
     return "Unknown";
 }

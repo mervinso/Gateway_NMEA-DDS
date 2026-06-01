@@ -21,9 +21,12 @@ std::string category_str(Category c) {
         case Category::Heading:  return "heading";
         case Category::Radar:    return "radar";
         case Category::Sounder:  return "sounder";
-        case Category::Velocity: return "velocity";
-        case Category::Attitude: return "attitude";
-        case Category::Inertial: return "inertial";
+        case Category::Velocity:  return "velocity";
+        case Category::Attitude:  return "attitude";
+        case Category::Inertial:  return "inertial";
+        case Category::Autopilot: return "autopilot";
+        case Category::Engine:    return "engine";
+        case Category::AIS:       return "ais";
     }
     return "unknown";
 }
