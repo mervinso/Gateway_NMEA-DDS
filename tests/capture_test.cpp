@@ -15,6 +15,7 @@
 #include "capture/BaudDetector.hpp"
 #include "capture/SerialSource.hpp"
 #include "capture/TcpSource.hpp"
+#include "capture/UdpSource.hpp"
 
 using namespace nmea;
 
@@ -209,4 +210,46 @@ TEST(BaudDetector, DetectsBaudWhenValidNmeaPresent) {
     writer.join();
 
     EXPECT_NE(detected, 0) << "BaudDetector no detectó NMEA válido";
+}
+
+// ---------------------------------------------------------------------------
+// UdpSource tests
+// ---------------------------------------------------------------------------
+
+TEST(UdpSource, OpenBindsPortAndIsOpen) {
+    UdpSource src;
+    EXPECT_TRUE(src.open(34100));
+    EXPECT_TRUE(src.is_open());
+    EXPECT_EQ(src.description(), "udp://34100");
+}
+
+TEST(UdpSource, ReceivesDatagram) {
+    UdpSource src;
+    ASSERT_TRUE(src.open(34101));
+
+    // Emitir un datagrama NMEA al puerto local (un sentence por datagrama,
+    // como hace el simulador UDP).
+    int tx = socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_GE(tx, 0);
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port        = htons(34101);
+    constexpr std::string_view gga =
+        "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
+    ::sendto(tx, gga.data(), gga.size(), 0,
+             reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    ::close(tx);
+
+    char buf[128]{};
+    const ssize_t n = src.read(buf, sizeof(buf), 500);
+    ASSERT_GT(n, 0);
+    EXPECT_EQ(std::string_view(buf, 6), "$GPGGA");
+}
+
+TEST(UdpSource, ReadTimeoutReturnsZero) {
+    UdpSource src;
+    ASSERT_TRUE(src.open(34102));
+    char buf[16]{};
+    EXPECT_EQ(src.read(buf, sizeof(buf), 50), 0);  // sin datos → timeout
 }

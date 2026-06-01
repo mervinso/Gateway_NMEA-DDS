@@ -20,6 +20,7 @@
 
 #include "capture/SerialSource.hpp"
 #include "capture/TcpSource.hpp"
+#include "capture/UdpSource.hpp"
 
 namespace nmea::ui {
 
@@ -83,6 +84,17 @@ std::unique_ptr<nmea::ISource> GatewayController::makeSource(
         const uint16_t port = addr.mid(colon+1).toUShort();
         auto src = std::make_unique<nmea::TcpSource>();
         if (!src->connect(host.toStdString(), port)) return nullptr;
+        return src;
+    }
+    if (source.startsWith("udp://")) {
+        // "udp://3100" o "udp://:3100" → bind al puerto local para recibir broadcast.
+        QString rest = source.mid(6);
+        const int colon = rest.lastIndexOf(':');
+        if (colon >= 0) rest = rest.mid(colon + 1);
+        const uint16_t port = rest.toUShort();
+        if (port == 0) return nullptr;
+        auto src = std::make_unique<nmea::UdpSource>();
+        if (!src->open(port)) return nullptr;
         return src;
     }
     auto src = std::make_unique<nmea::SerialSource>();

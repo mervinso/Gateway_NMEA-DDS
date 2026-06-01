@@ -29,7 +29,7 @@ InterfacesPanel::InterfacesPanel(GatewayController* ctrl, QWidget* parent)
     form->addRow("Puerto serie:", port_combo_);
 
     tcp_edit_ = new QLineEdit;
-    tcp_edit_->setPlaceholderText("192.168.1.100:10110");
+    tcp_edit_->setPlaceholderText("host:puerto (TCP) o udp://3100");
     form->addRow("TCP/UDP:", tcp_edit_);
 
     baud_combo_ = new QComboBox;
@@ -71,8 +71,13 @@ void InterfacesPanel::refreshPorts() {
 }
 
 QString InterfacesPanel::selectedSource() const {
-    const QString tcp = tcp_edit_->text().trimmed();
-    if (!tcp.isEmpty()) return "tcp://" + tcp;
+    const QString net = tcp_edit_->text().trimmed();
+    if (!net.isEmpty()) {
+        // Respeta un esquema explícito (udp://3100, tcp://host:port);
+        // si no hay esquema, se asume TCP por compatibilidad.
+        if (net.startsWith("tcp://") || net.startsWith("udp://")) return net;
+        return "tcp://" + net;
+    }
     return port_combo_->currentData().toString();
 }
 

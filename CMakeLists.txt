@@ -19,6 +19,7 @@ target_compile_options(nmea_registry PRIVATE -Wall -Wextra)
 add_library(nmea_capture
     src/capture/SerialSource.cpp
     src/capture/TcpSource.cpp
+    src/capture/UdpSource.cpp
     src/capture/BaudDetector.cpp)
 target_include_directories(nmea_capture PUBLIC src)
 target_link_libraries(nmea_capture PUBLIC nmea_parser)
