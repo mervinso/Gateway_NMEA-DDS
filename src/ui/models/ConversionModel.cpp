@@ -36,7 +36,7 @@ QVariant ConversionModel::data(const QModelIndex& idx, int role) const {
 QVariant ConversionModel::headerData(int section, Qt::Orientation o, int role) const {
     if (o != Qt::Horizontal || role != Qt::DisplayRole) return {};
     switch (section) {
-        case DeviceId:   return "device_id";
+        case DeviceId:   return "tema";
         case State:      return "Estado";
         case Messages:   return "Mensajes";
         case Categories: return "Categorías";

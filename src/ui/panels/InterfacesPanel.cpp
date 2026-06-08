@@ -18,7 +18,7 @@ namespace nmea::ui {
 InterfacesPanel::InterfacesPanel(GatewayController* ctrl, QWidget* parent)
     : QWidget(parent), ctrl_(ctrl)
 {
-    auto* box    = new QGroupBox("① Interfaces disponibles", this);
+    auto* box    = new QGroupBox("① Interfaces", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);

@@ -56,7 +56,7 @@ static QString dynamicTypeToIdl(
 
 IdlPreviewPanel::IdlPreviewPanel(GatewayController* ctrl, QWidget* parent)
     : QWidget(parent), ctrl_(ctrl) {
-    auto* box    = new QGroupBox("③ Preview IDL", this);
+    auto* box    = new QGroupBox("③ IDL", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);
@@ -74,7 +74,7 @@ IdlPreviewPanel::IdlPreviewPanel(GatewayController* ctrl, QWidget* parent)
 
     auto* btn_row = new QHBoxLayout;
     save_btn_   = new QPushButton("📄 Guardar IDL…");
-    launch_btn_ = new QPushButton("🚀 Crear y Ejecutar");
+    launch_btn_ = new QPushButton("🔨 Compilar");
     launch_btn_->setObjectName("btn_launch");
     btn_row->addWidget(save_btn_);
     btn_row->addStretch();

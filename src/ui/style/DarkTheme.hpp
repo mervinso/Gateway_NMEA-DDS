@@ -20,16 +20,18 @@ QGroupBox {
     background-color: #1e293b;
     border: 1px solid #334155;
     border-radius: 4px;
-    margin-top: 8px;
-    padding-top: 4px;
+    margin-top: 26px;
+    padding-top: 10px;
 }
 QGroupBox::title {
     color: #f59e0b;
     font-weight: bold;
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 4px;
-    left: 8px;
+    left: 10px;
+    top: 4px;
+    padding: 2px 8px;
+    background-color: #1e293b;
 }
 QComboBox, QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit {
     background-color: #0f172a;

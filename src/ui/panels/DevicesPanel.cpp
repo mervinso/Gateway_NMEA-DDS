@@ -6,10 +6,13 @@
 #include <QFormLayout>
 #include <QHeaderView>
 
+#include "registry/Registry.hpp"
+
 namespace nmea::ui {
 
-DevicesPanel::DevicesPanel(QWidget* parent) : QWidget(parent) {
-    auto* box    = new QGroupBox("② Dispositivos detectados", this);
+DevicesPanel::DevicesPanel(const nmea::Registry* registry, QWidget* parent)
+    : QWidget(parent), registry_(registry) {
+    auto* box    = new QGroupBox("② Dispositivo", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);
@@ -27,7 +30,11 @@ DevicesPanel::DevicesPanel(QWidget* parent) : QWidget(parent) {
     tree_->setAlternatingRowColors(true);
     tree_->header()->setStretchLastSection(false);
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    inner->addWidget(tree_);
+    // Altura generosa: este árbol (categorías → sentencias → campos) es la vista
+    // clave para verificar los tipos de dispositivo detectados.
+    tree_->setMinimumHeight(260);
+    tree_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    inner->addWidget(tree_, 1);
 }
 
 QString DevicesPanel::deviceId() const {
@@ -70,10 +77,21 @@ void DevicesPanel::onSentenceDetected(QString formatter, QString category,
     while (fmtItem->childCount() < fieldCount) {
         new QTreeWidgetItem(fmtItem);
     }
+    // Unidad de cada campo desde el registro (fuente de verdad de unidades).
+    const SentenceDef* def =
+            registry_ ? registry_->lookup(formatter.toStdString()) : nullptr;
     for (int i = 0; i < fieldCount; ++i) {
         auto* child = fmtItem->child(i);
         child->setText(0, fieldNames[i]);
         child->setText(1, fieldValues.value(i));
+        if (def) {
+            for (const auto& fd : def->fields) {
+                if (fd.name == fieldNames[i].toStdString()) {
+                    child->setText(2, QString::fromStdString(fd.unit));
+                    break;
+                }
+            }
+        }
     }
 }
 

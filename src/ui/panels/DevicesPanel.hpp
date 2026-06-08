@@ -7,12 +7,14 @@
 #include <QString>
 #include <QStringList>
 
+namespace nmea { class Registry; }
+
 namespace nmea::ui {
 
 class DevicesPanel : public QWidget {
     Q_OBJECT
 public:
-    explicit DevicesPanel(QWidget* parent = nullptr);
+    explicit DevicesPanel(const nmea::Registry* registry, QWidget* parent = nullptr);
 
     QString deviceId() const;
     QStringList detectedFormatters() const;
@@ -27,6 +29,7 @@ signals:
     void formatterListChanged(QStringList formatters);
 
 private:
+    const nmea::Registry* registry_;
     QLineEdit*   device_id_edit_;
     QTreeWidget* tree_;
     QMap<QString, QTreeWidgetItem*> formatter_items_;

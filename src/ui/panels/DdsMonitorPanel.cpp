@@ -7,13 +7,15 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QApplication>
+#include <QMessageBox>
 
 namespace nmea::ui {
 
 DdsMonitorPanel::DdsMonitorPanel(GatewayController* ctrl, QWidget* parent)
     : QWidget(parent), ctrl_(ctrl)
 {
-    auto* box    = new QGroupBox("⑥ Monitor DDS", this);
+    auto* box    = new QGroupBox("⑥ Monitor", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);
@@ -28,10 +30,12 @@ DdsMonitorPanel::DdsMonitorPanel(GatewayController* ctrl, QWidget* parent)
     domain_spin_->setValue(0);
     domain_spin_->setFixedWidth(60);
     ctrl_row->addWidget(domain_spin_);
-    auto* scan_btn  = new QPushButton("🔍 Barrer");
-    auto* diag_btn  = new QPushButton("⚕ Diagnósticos");
-    auto* clear_btn = new QPushButton("✕");
+    auto* scan_btn   = new QPushButton("🔍 Barrer");
+    auto* sample_btn = new QPushButton("👁 Leer sample");
+    auto* diag_btn   = new QPushButton("⚕ Diagnósticos");
+    auto* clear_btn  = new QPushButton("✕");
     ctrl_row->addWidget(scan_btn);
+    ctrl_row->addWidget(sample_btn);
     ctrl_row->addWidget(diag_btn);
     ctrl_row->addStretch();
     ctrl_row->addWidget(clear_btn);
@@ -55,9 +59,10 @@ DdsMonitorPanel::DdsMonitorPanel(GatewayController* ctrl, QWidget* parent)
     diag_label_->setObjectName("lbl_warn");
     inner->addWidget(diag_label_);
 
-    connect(scan_btn,  &QPushButton::clicked, this, &DdsMonitorPanel::onScanClicked);
-    connect(diag_btn,  &QPushButton::clicked, this, &DdsMonitorPanel::onDiagClicked);
-    connect(clear_btn, &QPushButton::clicked, this, [this]() { model_->clear(); });
+    connect(scan_btn,   &QPushButton::clicked, this, &DdsMonitorPanel::onScanClicked);
+    connect(sample_btn, &QPushButton::clicked, this, &DdsMonitorPanel::onReadSampleClicked);
+    connect(diag_btn,   &QPushButton::clicked, this, &DdsMonitorPanel::onDiagClicked);
+    connect(clear_btn,  &QPushButton::clicked, this, [this]() { model_->clear(); });
 }
 
 void DdsMonitorPanel::onScanClicked() {
@@ -68,6 +73,30 @@ void DdsMonitorPanel::onScanClicked() {
 void DdsMonitorPanel::onDiagClicked() {
     diag_label_->clear();
     ctrl_->runNetworkDiagnostics();
+}
+
+void DdsMonitorPanel::onReadSampleClicked() {
+    const QModelIndex idx = table_->currentIndex();
+    if (!idx.isValid()) {
+        QMessageBox::information(this, "Leer sample",
+                "Selecciona un tópico de la tabla primero.");
+        return;
+    }
+    const QString topic = model_->data(
+            model_->index(idx.row(), DdsTopicModel::Topic)).toString();
+    const QString type = model_->data(
+            model_->index(idx.row(), DdsTopicModel::Type)).toString();
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const QString sample = ctrl_->readTopicSample(topic, type);
+    QApplication::restoreOverrideCursor();
+
+    QMessageBox box(this);
+    box.setWindowTitle("Sample: " + topic);
+    box.setText("<b>" + type + "</b>");
+    box.setInformativeText(sample);
+    box.setIcon(QMessageBox::Information);
+    box.exec();
 }
 
 void DdsMonitorPanel::onTopicDiscovered(int, QString topicName, QString typeName,

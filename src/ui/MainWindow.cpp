@@ -19,12 +19,12 @@
 namespace nmea::ui {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("Gateway NMEA 0183 → DDS  v1.0");
+    setWindowTitle("GW-NMEA-DDS");
     resize(1200, 720);
 
     controller_         = new GatewayController(this);
     interfaces_panel_   = new InterfacesPanel(controller_,  this);
-    devices_panel_      = new DevicesPanel(this);
+    devices_panel_      = new DevicesPanel(&controller_->registry(), this);
     idl_panel_          = new IdlPreviewPanel(controller_,  this);
     qos_panel_          = new QoSPanel(this);
     conversions_panel_  = new ConversionsPanel(controller_, this);

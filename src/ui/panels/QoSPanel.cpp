@@ -8,7 +8,7 @@
 namespace nmea::ui {
 
 QoSPanel::QoSPanel(QWidget* parent) : QWidget(parent) {
-    auto* box    = new QGroupBox("④ Perfil QoS recomendado", this);
+    auto* box    = new QGroupBox("④ QoS", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);

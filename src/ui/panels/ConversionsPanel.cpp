@@ -13,7 +13,7 @@ namespace nmea::ui {
 ConversionsPanel::ConversionsPanel(GatewayController* ctrl, QWidget* parent)
     : QWidget(parent), ctrl_(ctrl)
 {
-    auto* box    = new QGroupBox("⑤ Conversiones activas", this);
+    auto* box    = new QGroupBox("⑤ Topico", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);

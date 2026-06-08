@@ -7,20 +7,33 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <functional>
+#include <thread>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
 #include <fastdds/dds/domain/DomainParticipantListener.hpp>
 #include <fastdds/dds/builtin/topic/PublicationBuiltinTopicData.hpp>
 #include <fastdds/dds/builtin/topic/SubscriptionBuiltinTopicData.hpp>
+#include <fastdds/dds/subscriber/Subscriber.hpp>
+#include <fastdds/dds/subscriber/DataReader.hpp>
+#include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
+#include <fastdds/dds/subscriber/SampleInfo.hpp>
+#include <fastdds/dds/topic/Topic.hpp>
+#include <fastdds/dds/topic/TypeSupport.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicDataFactory.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicPubSubType.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicTypeMember.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/MemberDescriptor.hpp>
 #include <fastdds/rtps/writer/WriterDiscoveryStatus.hpp>
 #include <fastdds/rtps/reader/ReaderDiscoveryStatus.hpp>
 
 #include "capture/SerialSource.hpp"
 #include "capture/TcpSource.hpp"
 #include "capture/UdpSource.hpp"
+#include "mapper/Mapper.hpp"
 
 namespace nmea::ui {
 
@@ -255,6 +268,96 @@ void GatewayController::scanDomain(int domainId) {
     }
     emit networkDiagResult("Monitor DDS", true,
             QString("Escuchando dominio %1…").arg(domainId));
+}
+
+// Formatea un DynamicData como "campo = valor" por línea, leyendo cada miembro
+// según su TypeKind.
+static QString dynamicDataToString(
+        eprosima::fastdds::dds::DynamicType::_ref_type type,
+        eprosima::fastdds::dds::DynamicData::_ref_type data) {
+    using namespace eprosima::fastdds::dds;
+    QString out;
+    DynamicTypeMembersById members;
+    type->get_all_members(members);
+    for (auto& [id, member] : members) {
+        MemberDescriptor::_ref_type desc = traits<MemberDescriptor>::make_shared();
+        member->get_descriptor(desc);
+        const QString name = QString::fromStdString(std::string(desc->name()));
+        const TypeKind kind = desc->type() ? desc->type()->get_kind() : TK_NONE;
+        QString val;
+        switch (kind) {
+            case TK_STRING8: { std::string s; data->get_string_value(s, id);  val = QString::fromStdString(s); break; }
+            case TK_FLOAT64: { double v;      data->get_float64_value(v, id); val = QString::number(v); break; }
+            case TK_FLOAT32: { float v;       data->get_float32_value(v, id); val = QString::number(v); break; }
+            case TK_INT32:   { int32_t v;     data->get_int32_value(v, id);   val = QString::number(v); break; }
+            case TK_UINT32:  { uint32_t v;    data->get_uint32_value(v, id);  val = QString::number(v); break; }
+            case TK_INT64:   { int64_t v;     data->get_int64_value(v, id);   val = QString::number(qlonglong(v)); break; }
+            case TK_CHAR8:   { char v;        data->get_char8_value(v, id);   val = QString(QChar(v)); break; }
+            default:         val = "?";
+        }
+        out += name + " = " + val + "\n";
+    }
+    return out;
+}
+
+QString GatewayController::readTopicSample(const QString& topicName,
+                                           const QString& typeName) {
+    using namespace eprosima::fastdds::dds;
+    if (!monitor_participant_)
+        return "Inicia un barrido en el Monitor antes de leer un sample.";
+
+    // Reconstruye el DynamicType desde el registro (solo tipos del gateway).
+    const std::string tn = typeName.toStdString();
+    Mapper mapper(registry_);
+    DynamicType::_ref_type dyn_type;
+    if (tn == "RawSentence") {
+        dyn_type = mapper.raw_sentence_type();
+    } else if (tn.rfind("Nmea", 0) == 0) {
+        dyn_type = mapper.type_for(tn.substr(4));
+    } else {
+        return QString("Tipo '%1' no reconocido: solo se pueden leer tópicos "
+                       "publicados por este gateway.").arg(typeName);
+    }
+    if (!dyn_type) return "No se pudo reconstruir el tipo dinámico.";
+
+    TypeSupport ts(new DynamicPubSubType(dyn_type));
+    ts.register_type(monitor_participant_, tn);
+
+    Topic* topic = monitor_participant_->create_topic(
+            topicName.toStdString(), tn, TOPIC_QOS_DEFAULT);
+    if (!topic) return "No se pudo crear el tópico para lectura.";
+
+    Subscriber* sub = monitor_participant_->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
+    DataReaderQos rq = DATAREADER_QOS_DEFAULT;
+    // BEST_EFFORT casa con writers BEST_EFFORT y RELIABLE (ofrecido ≥ pedido).
+    rq.reliability().kind = BEST_EFFORT_RELIABILITY_QOS;
+    DataReader* reader = sub ? sub->create_datareader(topic, rq) : nullptr;
+
+    QString result = "Sin datos en 3 s. ¿Hay una conversión publicando "
+                     "este tópico ahora mismo?";
+    if (!reader) {
+        result = "No se pudo crear el lector.";
+    } else {
+        // Sondea take_next_sample hasta ~3 s (wait_for_unread_message no es
+        // fiable aquí; el sondeo sí entrega la muestra).
+        for (int i = 0; i < 60; ++i) {
+            DynamicData::_ref_type sample =
+                    DynamicDataFactory::get_instance()->create_data(dyn_type);
+            SampleInfo info;
+            if (reader->take_next_sample(&sample, &info) == RETCODE_OK && info.valid_data) {
+                result = dynamicDataToString(dyn_type, sample);
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+
+    if (sub) {
+        if (reader) sub->delete_datareader(reader);
+        monitor_participant_->delete_subscriber(sub);
+    }
+    monitor_participant_->delete_topic(topic);
+    return result;
 }
 
 void GatewayController::stopScan() {

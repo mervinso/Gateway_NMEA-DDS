@@ -35,6 +35,12 @@ public:
     void stopScan();
     void runNetworkDiagnostics();
 
+    // Lee una muestra del tópico indicado y la devuelve formateada como texto.
+    // Reconstruye el DynamicType desde el registro (tipos del gateway "Nmea<FMT>"
+    // / "RawSentence"). Bloquea hasta ~3 s esperando un dato. Requiere un barrido
+    // activo (participante del monitor en el dominio).
+    QString readTopicSample(const QString& topicName, const QString& typeName);
+
     const Registry& registry() const { return registry_; }
 
 signals:
