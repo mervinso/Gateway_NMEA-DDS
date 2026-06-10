@@ -184,6 +184,9 @@ void Pipeline::worker_loop() {
                 const auto& sv   = parser.sentence();
                 const auto  info = mapper.resolve(sv.address);
 
+                // talker ya viene resuelto en SentenceInfo (mismo cálculo que el Mapper).
+                const std::string talker = info.talker;
+
                 // Callback de preview (hilo worker → main thread via invokeMethod).
                 if (cfg_.on_sentence) {
                     const SentenceDef* def = info.formatter.empty()
@@ -196,7 +199,7 @@ void Pipeline::worker_loop() {
                             values.push_back(std::string(sv.fields[i]));
                         }
                     }
-                    cfg_.on_sentence(info.formatter,
+                    cfg_.on_sentence(talker, info.formatter,
                                      category_name(def ? def->category : Category::GPS),
                                      std::move(names), std::move(values));
                 }

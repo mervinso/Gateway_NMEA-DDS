@@ -45,7 +45,8 @@ public:
 
         // Callback opcional invocado desde el hilo worker por cada sentencia válida.
         // Los strings son copias seguras (no string_view). Puede ser nullptr.
-        std::function<void(std::string formatter,
+        std::function<void(std::string talker,
+                           std::string formatter,
                            std::string category,
                            std::vector<std::string> field_names,
                            std::vector<std::string> field_values)> on_sentence;
