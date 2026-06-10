@@ -52,6 +52,7 @@ public:
     // Usados por el Pipeline para nombrar tópicos y tipos DDS.
     struct SentenceInfo {
         std::string formatter;    // "GGA", "VNYMR", "" si desconocido
+        std::string talker;       // "GP", "" si propietario o desconocido
         std::string topic_name;   // "nmea/gps/GGA", "nmea/raw/RawSentence"
         std::string type_name;    // "NmeaGGA", "RawSentence"
     };
