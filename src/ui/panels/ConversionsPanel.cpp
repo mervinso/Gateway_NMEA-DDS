@@ -5,15 +5,13 @@
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHeaderView>
-#include <QLabel>
 #include <QPushButton>
 
 namespace nmea::ui {
 
 ConversionsPanel::ConversionsPanel(GatewayController* ctrl, QWidget* parent)
-    : QWidget(parent), ctrl_(ctrl)
-{
-    auto* box    = new QGroupBox("⑤ Topico", this);
+    : QWidget(parent), ctrl_(ctrl) {
+    auto* box    = new QGroupBox("⑤ Tópicos activos", this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0,0,0,0);
     layout->addWidget(box);
@@ -26,31 +24,37 @@ ConversionsPanel::ConversionsPanel(GatewayController* ctrl, QWidget* parent)
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->horizontalHeader()->setSectionResizeMode(
-            ConversionModel::DeviceId, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(
-            ConversionModel::State, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(
-            ConversionModel::Messages, QHeaderView::ResizeToContents);
+            ConversionModel::Topic, QHeaderView::Stretch);
     table_->verticalHeader()->hide();
     inner->addWidget(table_);
 
-    // Botón de acción contextual (stop seleccionado).
-    auto* stop_btn = new QPushButton("⏹ Detener seleccionada");
-    stop_btn->setObjectName("btn_stop");
-    inner->addWidget(stop_btn);
+    auto* del_btn = new QPushButton("🗑 Eliminar tópico");
+    del_btn->setObjectName("btn_stop");
+    inner->addWidget(del_btn);
 
-    connect(stop_btn, &QPushButton::clicked, this, [this]() {
-        const auto idx = table_->currentIndex();
-        if (!idx.isValid()) return;
-        const QString devId = model_->data(
-                model_->index(idx.row(), ConversionModel::DeviceId)).toString();
-        ctrl_->stopConversion(devId);
+    connect(del_btn, &QPushButton::clicked, this, [this]() {
+        const int row = table_->currentIndex().row();
+        const ConversionRow* r = model_->at(row);
+        if (!r) return;
+        const QString talker = r->talker, formatter = r->formatter;
+        ctrl_->removeConversion(talker, formatter);   // dispara conversionRemoved
     });
 }
 
-void ConversionsPanel::onConversionStateChanged(
-        QString deviceId, int state, quint64 sentencesOk) {
-    model_->addOrUpdate({deviceId, state, sentencesOk, ""});
+void ConversionsPanel::onConversionAdded(QString talker, QString formatter,
+                                         QString deviceId, QString topic) {
+    model_->addRow({talker, formatter, deviceId, topic});
+}
+
+void ConversionsPanel::onConversionRemoved(QString talker, QString formatter) {
+    for (int i = 0; i < model_->rowCount(); ++i) {
+        const ConversionRow* r = model_->at(i);
+        if (r && r->talker == talker && r->formatter == formatter) {
+            model_->removeAt(i);
+            break;
+        }
+    }
+    emit deleteRequested(talker, formatter);  // MainWindow → markAvailable en ②
 }
 
 }  // namespace nmea::ui

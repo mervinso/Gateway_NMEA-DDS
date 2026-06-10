@@ -13,7 +13,13 @@ public:
     explicit ConversionsPanel(GatewayController* ctrl, QWidget* parent = nullptr);
 
 public slots:
-    void onConversionStateChanged(QString deviceId, int state, quint64 sentencesOk);
+    void onConversionAdded(QString talker, QString formatter,
+                           QString deviceId, QString topic);
+    void onConversionRemoved(QString talker, QString formatter);
+
+signals:
+    // Reenvía al MainWindow para devolver la trama a "disponible" en ②.
+    void deleteRequested(QString talker, QString formatter);
 
 private:
     GatewayController* ctrl_;
