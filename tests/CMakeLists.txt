@@ -31,3 +31,9 @@ target_include_directories(qos_recommender_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(qos_recommender_test PRIVATE
     nmea_registry GTest::gtest GTest::gtest_main)
 add_test(NAME qos_recommender_test COMMAND qos_recommender_test)
+
+add_executable(publish_plan_test publish_plan_test.cpp)
+target_link_libraries(publish_plan_test PRIVATE nmea_pipeline GTest::gtest GTest::gtest_main)
+add_test(NAME publish_plan_test COMMAND publish_plan_test)
+set_tests_properties(publish_plan_test PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=/opt/ros/lyrical/lib:/opt/ros/lyrical/lib/x86_64-linux-gnu")

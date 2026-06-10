@@ -29,7 +29,7 @@ target_compile_options(nmea_capture PRIVATE -Wall -Wextra)
 find_package(fastdds 3 REQUIRED HINTS /opt/ros/lyrical/share/fastdds/cmake)
 
 # Pipeline: hilo POSIX read→parse→map→publish (D9/D13).
-add_library(nmea_pipeline src/pipeline/Pipeline.cpp)
+add_library(nmea_pipeline src/pipeline/Pipeline.cpp src/pipeline/PublishPlan.cpp)
 target_include_directories(nmea_pipeline PUBLIC src)
 target_link_libraries(nmea_pipeline PUBLIC nmea_capture nmea_mapper fastdds)
 target_compile_options(nmea_pipeline PRIVATE -Wall -Wextra)
