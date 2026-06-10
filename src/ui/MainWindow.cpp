@@ -7,6 +7,8 @@
 #include "ui/panels/QoSPanel.hpp"
 #include "ui/panels/ConversionsPanel.hpp"
 #include "ui/panels/DdsMonitorPanel.hpp"
+#include "ui/QoSRecommender.hpp"
+#include "registry/Registry.hpp"
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -17,6 +19,21 @@
 #include <QWidget>
 
 namespace nmea::ui {
+
+namespace {
+nmea::Category categoryFromName(const QString& name) {
+    static const std::pair<const char*, nmea::Category> kMap[] = {
+        {"GPS", nmea::Category::GPS}, {"Weather", nmea::Category::Weather},
+        {"Heading", nmea::Category::Heading}, {"Radar", nmea::Category::Radar},
+        {"Sounder", nmea::Category::Sounder}, {"Velocity", nmea::Category::Velocity},
+        {"Attitude", nmea::Category::Attitude}, {"Inertial", nmea::Category::Inertial},
+        {"Autopilot", nmea::Category::Autopilot}, {"Engine", nmea::Category::Engine},
+        {"AIS", nmea::Category::AIS},
+    };
+    for (auto& [n, c] : kMap) if (name == n) return c;
+    return nmea::Category::GPS;
+}
+}  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("GW-NMEA-DDS");
@@ -66,38 +83,52 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void MainWindow::connectPanels() {
-    // Interfaces → controller (preview) → devices.
+    // ① Interfaces → controller: abre la interfaz (preview + publicación selectiva).
     connect(interfaces_panel_, &InterfacesPanel::connected,
             this, [this](QString src, int baud) {
         devices_panel_->clear();
-        controller_->startPreview(src, baud, devices_panel_->deviceId());
+        controller_->connectInterface(src, baud, 0);
     });
 
-    // Controller → devices panel (datos en vivo).
+    // controller → ② Sensores (datos en vivo, con talker).
     connect(controller_, &GatewayController::sentenceDetected,
             devices_panel_, &DevicesPanel::onSentenceDetected);
 
-    // Devices → IDL panel (lista de formatters).
-    connect(devices_panel_, &DevicesPanel::formatterListChanged,
-            idl_panel_, &IdlPreviewPanel::setFormatters);
-
-    // IDL panel → controller (lanzar conversión).
-    connect(idl_panel_, &IdlPreviewPanel::launchRequested,
-            this, [this](QString /*formatter*/) {
-        const QString src  = interfaces_panel_->selectedSource();
-        const int     baud = interfaces_panel_->selectedBaud();
-        const QString id   = devices_panel_->deviceId();
-        if (src.isEmpty() || id.isEmpty()) return;
-        const QoSProfile qos = qos_panel_->currentProfile();
-        controller_->launchConversion(src, baud, id, 0, qos);
-        statusBar()->showMessage("Conversión lanzada: " + id);
+    // ② selección de trama → ③ IDL + ④ QoS auto.
+    connect(devices_panel_, &DevicesPanel::tramaSelected, this,
+            [this](QString talker, QString formatter, QString category,
+                   QString /*proposedId*/, double rateHz) {
+        idl_panel_->showFormatter(formatter);
+        const nmea::Category cat = categoryFromName(category);
+        qos_panel_->setProfile(nmea::QoSRecommender::recommend(cat, rateHz));
     });
 
-    // Controller → conversions panel.
-    connect(controller_, &GatewayController::conversionStateChanged,
-            conversions_panel_, &ConversionsPanel::onConversionStateChanged);
+    // ③ Convertir → controller.addConversion con datos de ②/④.
+    connect(idl_panel_, &IdlPreviewPanel::convertRequested, this, [this]() {
+        const QString talker    = devices_panel_->selectedTalker();
+        const QString formatter = devices_panel_->selectedFormatter();
+        const QString devId      = devices_panel_->deviceId();
+        if (formatter.isEmpty() || devId.isEmpty()) {
+            statusBar()->showMessage("Selecciona una trama y define device_id");
+            return;
+        }
+        controller_->addConversion(talker, formatter, devId,
+                                   qos_panel_->currentProfile());
+        devices_panel_->markConverted(talker, formatter);
+        statusBar()->showMessage("Tópico creado: " + formatter);
+    });
 
-    // Controller → DDS monitor.
+    // controller → ⑤ tópicos activos.
+    connect(controller_, &GatewayController::conversionAdded,
+            conversions_panel_, &ConversionsPanel::onConversionAdded);
+    connect(controller_, &GatewayController::conversionRemoved,
+            conversions_panel_, &ConversionsPanel::onConversionRemoved);
+
+    // ⑤ eliminar → ② devuelve la trama a disponible.
+    connect(conversions_panel_, &ConversionsPanel::deleteRequested,
+            devices_panel_, &DevicesPanel::markAvailable);
+
+    // controller → ⑥ DDS monitor (sin cambios).
     connect(controller_, &GatewayController::ddsTopicDiscovered,
             monitor_panel_, &DdsMonitorPanel::onTopicDiscovered);
     connect(controller_, &GatewayController::networkDiagResult,
