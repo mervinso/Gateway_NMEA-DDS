@@ -10,6 +10,7 @@
 #include <QTimer>
 
 #include "pipeline/Pipeline.hpp"
+#include "pipeline/PublishPlan.hpp"
 #include "registry/Registry.hpp"
 #include "ui/QoSRecommender.hpp"
 
@@ -25,12 +26,15 @@ public:
     explicit GatewayController(QObject* parent = nullptr);
     ~GatewayController() override;
 
-    void startPreview(const QString& source, int baud, const QString& deviceId);
-    void stopPreview();
-    void launchConversion(const QString& source, int baud,
-                          const QString& deviceId, int domainId,
-                          const QoSProfile& qos);
-    void stopConversion(const QString& deviceId);
+    // Abre la interfaz: un único pipeline (preview siempre + publicación selectiva).
+    void connectInterface(const QString& source, int baud, int domainId);
+    void disconnectInterface();
+
+    // Habilita/Deshabilita la conversión de una trama de un sensor.
+    void addConversion(const QString& talker, const QString& formatter,
+                       const QString& deviceId, const QoSProfile& qos);
+    void removeConversion(const QString& talker, const QString& formatter);
+
     void scanDomain(int domainId);
     void stopScan();
     void runNetworkDiagnostics();
@@ -44,9 +48,12 @@ public:
     const Registry& registry() const { return registry_; }
 
 signals:
-    void sentenceDetected(QString formatter, QString category,
+    void sentenceDetected(QString talker, QString formatter, QString category,
                           QStringList fieldNames, QStringList fieldValues,
                           double rateHz);
+    void conversionAdded(QString talker, QString formatter,
+                         QString deviceId, QString topic);
+    void conversionRemoved(QString talker, QString formatter);
     void conversionStateChanged(QString deviceId, int state, quint64 sentencesOk);
     void ddsTopicDiscovered(int domainId, QString topicName, QString typeName,
                             int pubCount, int subCount);
@@ -59,8 +66,8 @@ private:
     std::unique_ptr<nmea::ISource> makeSource(const QString& source, int baud);
 
     Registry registry_;
-    std::unique_ptr<nmea::Pipeline> preview_pipeline_;
-    std::map<std::string, std::unique_ptr<nmea::Pipeline>> pipelines_;
+    nmea::PublishPlan publish_plan_;
+    std::unique_ptr<nmea::Pipeline> iface_pipeline_;
     QTimer* poll_timer_;
 
     struct RateTracker { quint64 last_count{0}; quint64 prev_count{0}; double rate_hz{0.0}; };

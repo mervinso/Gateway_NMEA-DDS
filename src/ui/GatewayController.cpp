@@ -82,9 +82,8 @@ GatewayController::GatewayController(QObject* parent)
 }
 
 GatewayController::~GatewayController() {
-    stopPreview();
+    disconnectInterface();
     stopScan();
-    for (auto& [id, p] : pipelines_) p->stop();
 }
 
 std::unique_ptr<nmea::ISource> GatewayController::makeSource(
@@ -115,81 +114,69 @@ std::unique_ptr<nmea::ISource> GatewayController::makeSource(
     return src;
 }
 
-void GatewayController::startPreview(const QString& source, int baud,
-                                      const QString& deviceId) {
-    stopPreview();
+void GatewayController::connectInterface(const QString& source, int baud,
+                                          int domainId) {
+    disconnectInterface();
     auto src = makeSource(source, baud);
     if (!src) {
-        emit networkDiagResult("Conexión serial/TCP", false,
-                               "No se pudo abrir " + source);
+        emit networkDiagResult("Conexión", false, "No se pudo abrir " + source);
         return;
     }
     nmea::Pipeline::Config cfg;
-    cfg.device_id      = deviceId.toStdString();
     cfg.source         = std::move(src);
     cfg.registry       = &registry_;
-    cfg.domain_id      = 0;
-    cfg.publish_to_dds = false;
-    cfg.on_sentence = [this](std::string formatter, std::string category,
+    cfg.domain_id      = domainId;
+    cfg.publish_to_dds = true;       // el plan decide qué se publica (arranca vacío)
+    cfg.plan           = &publish_plan_;
+    cfg.on_sentence = [this](std::string talker, std::string formatter,
+                              std::string category,
                               std::vector<std::string> names,
                               std::vector<std::string> values) {
         QStringList qnames, qvalues;
         for (auto& n : names)  qnames  << QString::fromStdString(n);
         for (auto& v : values) qvalues << QString::fromStdString(v);
+        const QString tk  = QString::fromStdString(talker);
         const QString fmt = QString::fromStdString(formatter);
         const QString cat = QString::fromStdString(category);
-        QMetaObject::invokeMethod(this, [this, fmt, cat, qnames, qvalues]() {
-            auto& rt = rate_trackers_[fmt.toStdString()];
+        QMetaObject::invokeMethod(this, [this, tk, fmt, cat, qnames, qvalues]() {
+            auto& rt = rate_trackers_[(tk + "|" + fmt).toStdString()];
             rt.last_count++;
-            emit sentenceDetected(fmt, cat, qnames, qvalues, rt.rate_hz);
+            emit sentenceDetected(tk, fmt, cat, qnames, qvalues, rt.rate_hz);
         }, Qt::QueuedConnection);
     };
-    preview_pipeline_ = std::make_unique<nmea::Pipeline>(std::move(cfg));
-    preview_pipeline_->start();
+    iface_pipeline_ = std::make_unique<nmea::Pipeline>(std::move(cfg));
+    iface_pipeline_->start();
 }
 
-void GatewayController::stopPreview() {
-    if (preview_pipeline_) {
-        preview_pipeline_->stop();
-        preview_pipeline_.reset();
+void GatewayController::disconnectInterface() {
+    if (iface_pipeline_) {
+        iface_pipeline_->stop();
+        iface_pipeline_.reset();
     }
     rate_trackers_.clear();
 }
 
-void GatewayController::launchConversion(const QString& source, int baud,
-                                          const QString& deviceId, int domainId,
-                                          const QoSProfile& qos) {
-    stopPreview();
-    auto src = makeSource(source, baud);
-    if (!src) return;
-    nmea::Pipeline::Config cfg;
-    cfg.device_id      = deviceId.toStdString();
-    cfg.source         = std::move(src);
-    cfg.registry       = &registry_;
-    cfg.domain_id      = domainId;
-    cfg.publish_to_dds = true;
-    // Aplica el perfil QoS elegido en la UI al DataWriter (D8).
-    cfg.qos = nmea::Pipeline::QosSettings{
-        qos.reliable, qos.transient_local, qos.deadline_ms, qos.lifespan_ms};
-    auto pipeline = std::make_unique<nmea::Pipeline>(std::move(cfg));
-    pipeline->start();
-    pipelines_[deviceId.toStdString()] = std::move(pipeline);
+void GatewayController::addConversion(const QString& talker,
+                                       const QString& formatter,
+                                       const QString& deviceId,
+                                       const QoSProfile& qos) {
+    publish_plan_.add(talker.toStdString(), formatter.toStdString(),
+                      deviceId.toStdString(),
+                      nmea::Pipeline::QosSettings{qos.reliable, qos.transient_local,
+                                                  qos.deadline_ms, qos.lifespan_ms});
+    nmea::Mapper mapper(registry_);
+    const auto info = mapper.resolve((talker + formatter).toStdString());
+    emit conversionAdded(talker, formatter, deviceId,
+                         QString::fromStdString(info.topic_name));
 }
 
-void GatewayController::stopConversion(const QString& deviceId) {
-    auto it = pipelines_.find(deviceId.toStdString());
-    if (it == pipelines_.end()) return;
-    it->second->stop();
-    pipelines_.erase(it);
-    emit conversionStateChanged(deviceId, 0, 0);
+void GatewayController::removeConversion(const QString& talker,
+                                          const QString& formatter) {
+    publish_plan_.remove(talker.toStdString(), formatter.toStdString());
+    emit conversionRemoved(talker, formatter);
 }
 
 void GatewayController::pollPipelines() {
-    for (auto& [id, p] : pipelines_) {
-        const int state = static_cast<int>(p->state());
-        emit conversionStateChanged(QString::fromStdString(id),
-                                    state, p->sentences_ok());
-    }
     for (auto& [fmt, rt] : rate_trackers_) {
         rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
         rt.prev_count = rt.last_count;
