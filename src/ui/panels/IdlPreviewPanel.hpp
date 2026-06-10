@@ -1,7 +1,7 @@
 // src/ui/panels/IdlPreviewPanel.hpp
 #pragma once
 #include <QWidget>
-#include <QComboBox>
+#include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QString>
@@ -16,24 +16,24 @@ class IdlPreviewPanel : public QWidget {
 public:
     explicit IdlPreviewPanel(GatewayController* ctrl, QWidget* parent = nullptr);
 
-    // Actualiza la lista de formatters detectados.
-    void setFormatters(const QStringList& formatters);
+    // Muestra el IDL de un formatter concreto (trama seleccionada en ②).
+    void showFormatter(const QString& formatter);
 
 signals:
-    void launchRequested(QString formatter);
+    void convertRequested();                  // el usuario pulsó "Convertir"
     void saveIdlRequested(QString formatter, QString idlText);
 
 private slots:
-    void onFormatterChanged(int index);
     void onSaveClicked();
-    void onLaunchClicked();
+    void onConvertClicked();
 
 private:
     GatewayController* ctrl_;
-    QComboBox*      fmt_combo_;
+    QLabel*         trama_label_;
     QPlainTextEdit* idl_view_;
     QPushButton*    save_btn_;
-    QPushButton*    launch_btn_;
+    QPushButton*    convert_btn_;
+    QString         formatter_;
 
     QString buildIdl(const QString& formatter) const;
 };

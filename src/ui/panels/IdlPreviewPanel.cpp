@@ -63,8 +63,9 @@ IdlPreviewPanel::IdlPreviewPanel(GatewayController* ctrl, QWidget* parent)
 
     auto* inner = new QVBoxLayout(box);
 
-    fmt_combo_ = new QComboBox;
-    inner->addWidget(fmt_combo_);
+    trama_label_ = new QLabel("— selecciona una trama —");
+    trama_label_->setObjectName("lbl_warn");
+    inner->addWidget(trama_label_);
 
     idl_view_ = new QPlainTextEdit;
     idl_view_->setReadOnly(true);
@@ -73,26 +74,26 @@ IdlPreviewPanel::IdlPreviewPanel(GatewayController* ctrl, QWidget* parent)
     inner->addWidget(idl_view_);
 
     auto* btn_row = new QHBoxLayout;
-    save_btn_   = new QPushButton("📄 Guardar IDL…");
-    launch_btn_ = new QPushButton("🔨 Compilar");
-    launch_btn_->setObjectName("btn_launch");
+    save_btn_    = new QPushButton("📄 Guardar IDL…");
+    convert_btn_ = new QPushButton("✅ Convertir");
+    convert_btn_->setObjectName("btn_launch");
+    convert_btn_->setEnabled(false);
     btn_row->addWidget(save_btn_);
     btn_row->addStretch();
-    btn_row->addWidget(launch_btn_);
+    btn_row->addWidget(convert_btn_);
     inner->addLayout(btn_row);
 
-    connect(fmt_combo_,  QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &IdlPreviewPanel::onFormatterChanged);
-    connect(save_btn_,   &QPushButton::clicked, this, &IdlPreviewPanel::onSaveClicked);
-    connect(launch_btn_, &QPushButton::clicked, this, &IdlPreviewPanel::onLaunchClicked);
+    connect(save_btn_,    &QPushButton::clicked, this, &IdlPreviewPanel::onSaveClicked);
+    connect(convert_btn_, &QPushButton::clicked, this, &IdlPreviewPanel::onConvertClicked);
 }
 
-void IdlPreviewPanel::setFormatters(const QStringList& formatters) {
-    const QString current = fmt_combo_->currentText();
-    fmt_combo_->clear();
-    fmt_combo_->addItems(formatters);
-    const int idx = fmt_combo_->findText(current);
-    if (idx >= 0) fmt_combo_->setCurrentIndex(idx);
+void IdlPreviewPanel::showFormatter(const QString& formatter) {
+    formatter_ = formatter;
+    trama_label_->setText(formatter.isEmpty() ? "— selecciona una trama —"
+                                              : "Trama: " + formatter);
+    trama_label_->setObjectName(formatter.isEmpty() ? "lbl_warn" : "lbl_ok");
+    idl_view_->setPlainText(buildIdl(formatter));
+    convert_btn_->setEnabled(!formatter.isEmpty());
 }
 
 QString IdlPreviewPanel::buildIdl(const QString& formatter) const {
@@ -102,28 +103,21 @@ QString IdlPreviewPanel::buildIdl(const QString& formatter) const {
     return dynamicTypeToIdl(type);
 }
 
-void IdlPreviewPanel::onFormatterChanged(int) {
-    const QString fmt = fmt_combo_->currentText();
-    idl_view_->setPlainText(buildIdl(fmt));
-}
-
 void IdlPreviewPanel::onSaveClicked() {
-    const QString fmt  = fmt_combo_->currentText();
     const QString text = idl_view_->toPlainText();
-    if (fmt.isEmpty() || text.isEmpty()) return;
-
+    if (formatter_.isEmpty() || text.isEmpty()) return;
     const QString path = QFileDialog::getSaveFileName(
-            this, "Guardar IDL", fmt + ".idl", "IDL Files (*.idl)");
+            this, "Guardar IDL", formatter_ + ".idl", "IDL Files (*.idl)");
     if (path.isEmpty()) return;
     QFile f(path);
     if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream(&f) << text;
-        emit saveIdlRequested(fmt, text);
+        emit saveIdlRequested(formatter_, text);
     }
 }
 
-void IdlPreviewPanel::onLaunchClicked() {
-    emit launchRequested(fmt_combo_->currentText());
+void IdlPreviewPanel::onConvertClicked() {
+    if (!formatter_.isEmpty()) emit convertRequested();
 }
 
 }  // namespace nmea::ui
