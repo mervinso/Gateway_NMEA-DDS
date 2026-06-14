@@ -68,3 +68,35 @@ target_compile_options(gateway_app PRIVATE -Wall -Wextra)
 
 enable_testing()
 add_subdirectory(tests)
+
+add_executable(verify_live tools/verify_live.cpp)
+target_include_directories(verify_live PRIVATE src)
+target_link_libraries(verify_live PRIVATE nmea_pipeline nmea_mapper nmea_registry nmea_capture fastdds)
+
+# Arnés headless: lógica multi-interfaz de GatewayController contra UDP en vivo.
+add_executable(test_multi_iface tools/test_multi_iface.cpp src/ui/GatewayController.cpp)
+target_include_directories(test_multi_iface PRIVATE src)
+target_link_libraries(test_multi_iface PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+
+# Arnés headless: lectura serial real por la ruta de producción.
+add_executable(test_serial tools/test_serial.cpp src/ui/GatewayController.cpp)
+target_include_directories(test_serial PRIVATE src)
+target_link_libraries(test_serial PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+
+# Arnés headless: edición de QoS en vivo (recreación de writer).
+add_executable(test_qos tools/test_qos.cpp src/ui/GatewayController.cpp)
+target_include_directories(test_qos PRIVATE src)
+target_link_libraries(test_qos PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+
+# Validación interop: publicador de larga duración (datos reales del gateway).
+add_executable(pub_hold tools/pub_hold.cpp src/ui/GatewayController.cpp)
+target_include_directories(pub_hold PRIVATE src)
+target_link_libraries(pub_hold PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+
+# Validación interop: suscriptor DDS independiente (sin IDL del gateway).
+add_executable(dds_dynamic_sub tools/dds_dynamic_sub.cpp)
+target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)
