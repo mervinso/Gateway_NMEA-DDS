@@ -17,6 +17,7 @@ QVariant ConversionModel::data(const QModelIndex& idx, int role) const {
         case Formatter: return r.formatter;
         case DeviceId:  return r.deviceId;
         case Topic:     return r.topic;
+        case Qos:       return r.qos;
     }
     return {};
 }
@@ -28,6 +29,7 @@ QVariant ConversionModel::headerData(int section, Qt::Orientation o, int role) c
         case Formatter: return "Trama";
         case DeviceId:  return "device_id";
         case Topic:     return "Tópico";
+        case Qos:       return "QoS";
     }
     return {};
 }
@@ -43,6 +45,12 @@ void ConversionModel::removeAt(int row) {
     beginRemoveRows({}, row, row);
     rows_.remove(row);
     endRemoveRows();
+}
+
+void ConversionModel::setQos(int row, const QString& qos) {
+    if (row < 0 || row >= rows_.size()) return;
+    rows_[row].qos = qos;
+    emit dataChanged(index(row, Qos), index(row, Qos));
 }
 
 const ConversionRow* ConversionModel::at(int row) const {

@@ -30,13 +30,11 @@ DdsMonitorPanel::DdsMonitorPanel(GatewayController* ctrl, QWidget* parent)
     domain_spin_->setValue(0);
     domain_spin_->setFixedWidth(60);
     ctrl_row->addWidget(domain_spin_);
-    auto* scan_btn   = new QPushButton("🔍 Barrer");
+    auto* scan_btn   = new QPushButton("🔍 Buscar");
     auto* sample_btn = new QPushButton("👁 Leer sample");
-    auto* diag_btn   = new QPushButton("⚕ Diagnósticos");
     auto* clear_btn  = new QPushButton("✕");
     ctrl_row->addWidget(scan_btn);
     ctrl_row->addWidget(sample_btn);
-    ctrl_row->addWidget(diag_btn);
     ctrl_row->addStretch();
     ctrl_row->addWidget(clear_btn);
     inner->addLayout(ctrl_row);
@@ -53,26 +51,20 @@ DdsMonitorPanel::DdsMonitorPanel(GatewayController* ctrl, QWidget* parent)
     table_->verticalHeader()->hide();
     inner->addWidget(table_);
 
-    // Área de diagnósticos.
-    diag_label_ = new QLabel("— sin diagnósticos —");
+    // Estado del monitor DDS (resultado del barrido).
+    diag_label_ = new QLabel("— monitor inactivo —");
     diag_label_->setWordWrap(true);
     diag_label_->setObjectName("lbl_warn");
     inner->addWidget(diag_label_);
 
     connect(scan_btn,   &QPushButton::clicked, this, &DdsMonitorPanel::onScanClicked);
     connect(sample_btn, &QPushButton::clicked, this, &DdsMonitorPanel::onReadSampleClicked);
-    connect(diag_btn,   &QPushButton::clicked, this, &DdsMonitorPanel::onDiagClicked);
     connect(clear_btn,  &QPushButton::clicked, this, [this]() { model_->clear(); });
 }
 
 void DdsMonitorPanel::onScanClicked() {
     model_->clear();
     ctrl_->scanDomain(domain_spin_->value());
-}
-
-void DdsMonitorPanel::onDiagClicked() {
-    diag_label_->clear();
-    ctrl_->runNetworkDiagnostics();
 }
 
 void DdsMonitorPanel::onReadSampleClicked() {

@@ -14,8 +14,9 @@ public:
 
 public slots:
     void onConversionAdded(QString talker, QString formatter,
-                           QString deviceId, QString topic);
+                           QString deviceId, QString topic, QString qos);
     void onConversionRemoved(QString talker, QString formatter);
+    void onConversionQoSChanged(QString talker, QString formatter, QString qos);
 
 signals:
     // Reenvía al MainWindow para devolver la trama a "disponible" en ②.

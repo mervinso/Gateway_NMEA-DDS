@@ -6,6 +6,7 @@
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QBrush>
+#include <QSet>
 
 #include "registry/Registry.hpp"
 
@@ -27,10 +28,12 @@ DevicesPanel::DevicesPanel(const nmea::Registry* registry, QWidget* parent)
     inner->addLayout(form);
 
     tree_ = new QTreeWidget;
-    tree_->setHeaderLabels({"Sensor / Trama / Campo", "Valor", "Unidad", "Categoría"});
+    tree_->setHeaderLabels({"Sensor / Trama / Campo", "Valor", "Unidad",
+                            "Categoría", "Interfaz"});
     tree_->setAlternatingRowColors(true);
     tree_->header()->setStretchLastSection(false);
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tree_->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     tree_->setMinimumHeight(260);
     tree_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     inner->addWidget(tree_, 1);
@@ -55,26 +58,30 @@ QTreeWidgetItem* DevicesPanel::talkerItem(const QString& talker) {
 }
 
 QTreeWidgetItem* DevicesPanel::tramaItem(QTreeWidgetItem* talkerIt,
+                                         const QString& source,
                                          const QString& formatter,
                                          const QString& category) {
-    const QString key = talkerIt->data(0, Qt::UserRole).toString() + "|" + formatter;
+    const QString talker = talkerIt->data(0, Qt::UserRole).toString();
+    const QString key = source + "|" + talker + "|" + formatter;
     auto found = trama_items_.find(key);
     if (found != trama_items_.end()) return found.value();
-    auto* it = new QTreeWidgetItem(talkerIt, {formatter, "", "", category});
-    it->setData(0, Qt::UserRole, talkerIt->data(0, Qt::UserRole));  // talker
+    auto* it = new QTreeWidgetItem(talkerIt, {formatter, "", "", category, source});
+    it->setData(0, Qt::UserRole, talker);
     it->setData(0, Qt::UserRole + 1, formatter);
     it->setData(0, Qt::UserRole + 2, category);
+    it->setData(0, Qt::UserRole + 3, source);
     it->setExpanded(true);
     trama_items_[key] = it;
     return it;
 }
 
-void DevicesPanel::onSentenceDetected(QString talker, QString formatter,
-                                      QString category, QStringList fieldNames,
+void DevicesPanel::onSentenceDetected(QString source, QString talker,
+                                      QString formatter, QString category,
+                                      QStringList fieldNames,
                                       QStringList fieldValues, double /*rateHz*/) {
     if (formatter.isEmpty()) return;  // raw: no se ofrece como trama convertible
     QTreeWidgetItem* tk = talkerItem(talker);
-    QTreeWidgetItem* tr = tramaItem(tk, formatter, category);
+    QTreeWidgetItem* tr = tramaItem(tk, source, formatter, category);
 
     const int fieldCount = fieldNames.size();
     while (tr->childCount() < fieldCount) new QTreeWidgetItem(tr);
@@ -120,21 +127,47 @@ void DevicesPanel::onTreeSelectionChanged() {
 }
 
 void DevicesPanel::markConverted(QString talker, QString formatter) {
-    auto it = trama_items_.find(talker + "|" + formatter);
-    if (it == trama_items_.end()) return;
-    QTreeWidgetItem* node = it.value();
-    node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
-    node->setForeground(0, QBrush(Qt::darkGray));
-    node->setText(0, formatter + "  ✓ (convertida)");
+    // La conversión es global (talker|formatter): marca la trama en todas las
+    // interfaces que la traigan.
+    for (QTreeWidgetItem* node : trama_items_) {
+        if (node->data(0, Qt::UserRole).toString() != talker ||
+            node->data(0, Qt::UserRole + 1).toString() != formatter) continue;
+        node->setFlags(node->flags() & ~Qt::ItemIsSelectable);
+        node->setForeground(0, QBrush(Qt::darkGray));
+        node->setText(0, formatter + "  ✓ (convertida)");
+    }
 }
 
 void DevicesPanel::markAvailable(QString talker, QString formatter) {
-    auto it = trama_items_.find(talker + "|" + formatter);
-    if (it == trama_items_.end()) return;
-    QTreeWidgetItem* node = it.value();
-    node->setFlags(node->flags() | Qt::ItemIsSelectable);
-    node->setForeground(0, QBrush());
-    node->setText(0, formatter);
+    for (QTreeWidgetItem* node : trama_items_) {
+        if (node->data(0, Qt::UserRole).toString() != talker ||
+            node->data(0, Qt::UserRole + 1).toString() != formatter) continue;
+        node->setFlags(node->flags() | Qt::ItemIsSelectable);
+        node->setForeground(0, QBrush());
+        node->setText(0, formatter);
+    }
+}
+
+void DevicesPanel::removeInterface(QString source) {
+    QSet<QTreeWidgetItem*> talkers;
+    for (auto it = trama_items_.begin(); it != trama_items_.end(); ) {
+        QTreeWidgetItem* node = it.value();
+        if (node->data(0, Qt::UserRole + 3).toString() == source) {
+            if (sel_formatter_ == node->data(0, Qt::UserRole + 1).toString() &&
+                sel_talker_    == node->data(0, Qt::UserRole).toString()) {
+                sel_talker_.clear();
+                sel_formatter_.clear();
+            }
+            if (auto* parent = node->parent()) talkers.insert(parent);
+            delete node;
+            it = trama_items_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // Quita los nodos de talker que quedaron sin tramas.
+    for (QTreeWidgetItem* tk : talkers)
+        if (tk->childCount() == 0) delete tk;
 }
 
 void DevicesPanel::clear() {

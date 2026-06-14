@@ -33,6 +33,7 @@ struct DdsCtx {
         DataWriter*               writer{nullptr};
         TypeSupport               ts;
         DynamicType::_ref_type    dyn_type;  // retiene el tipo vivo (D6)
+        Pipeline::QosSettings     qos{};     // QoS con la que se creó el writer
     };
 
     DomainParticipant* participant{nullptr};
@@ -74,10 +75,19 @@ struct DdsCtx {
                               const Pipeline::QosSettings& wqos) {
         const std::string key = info.formatter.empty() ? "raw" : info.formatter;
         auto it = writers.find(key);
-        // La QoS se fija al crear el writer; si la entrada del plan cambia su QoS
-        // después, se aplica recién cuando el formatter sale del plan, se recicla
-        // (reconcile) y se vuelve a crear.
-        if (it != writers.end()) return it->second.writer;
+        if (it != writers.end()) {
+            const auto& c = it->second.qos;
+            const bool same = c.reliable == wqos.reliable
+                           && c.transient_local == wqos.transient_local
+                           && c.deadline_ms == wqos.deadline_ms
+                           && c.lifespan_ms == wqos.lifespan_ms;
+            if (same) return it->second.writer;
+            // La QoS cambió. Reliability/Durability son inmutables en DDS, así que
+            // se destruye el writer y se recrea con la nueva QoS (lag de un ciclo).
+            if (it->second.writer) publisher->delete_datawriter(it->second.writer);
+            if (it->second.topic)  participant->delete_topic(it->second.topic);
+            writers.erase(it);
+        }
 
         DynamicType::_ref_type dyn_type = info.formatter.empty()
                 ? mapper.raw_sentence_type()
@@ -93,6 +103,7 @@ struct DdsCtx {
         WriterEntry entry;
         entry.ts       = ts;
         entry.dyn_type = dyn_type;  // mantiene el DynamicType vivo
+        entry.qos      = wqos;      // recuerda la QoS para detectar cambios
         entry.topic  = participant->create_topic(
                 info.topic_name, info.type_name, TOPIC_QOS_DEFAULT);
         if (!entry.topic) return nullptr;

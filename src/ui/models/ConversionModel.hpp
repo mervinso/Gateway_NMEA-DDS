@@ -11,12 +11,13 @@ struct ConversionRow {
     QString formatter;
     QString deviceId;
     QString topic;
+    QString qos;
 };
 
 class ConversionModel : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Col { Talker=0, Formatter, DeviceId, Topic, ColCount };
+    enum Col { Talker=0, Formatter, DeviceId, Topic, Qos, ColCount };
 
     explicit ConversionModel(QObject* parent = nullptr);
 
@@ -27,6 +28,7 @@ public:
 
     void addRow(const ConversionRow& row);
     void removeAt(int row);
+    void setQos(int row, const QString& qos);
     const ConversionRow* at(int row) const;
 
 private:

@@ -11,6 +11,8 @@
 #include "registry/Registry.hpp"
 
 #include <QApplication>
+#include <QFontMetrics>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QScrollArea>
 #include <QSplitter>
@@ -80,19 +82,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->showMessage("Gateway NMEA→DDS listo");
 
     connectPanels();
+
+    // Garantiza que cada título de marco (QGroupBox) quepa completo dentro de su
+    // borde: el estilo de ::title no reserva ancho, así que fijamos un mínimo
+    // basado en el ancho del texto (+ margen para negrita y padding).
+    for (QGroupBox* gb : findChildren<QGroupBox*>())
+        gb->setMinimumWidth(gb->fontMetrics().horizontalAdvance(gb->title()) + 80);
 }
 
 void MainWindow::connectPanels() {
     // ① Interfaces → controller: abre la interfaz (preview + publicación selectiva).
     connect(interfaces_panel_, &InterfacesPanel::connected,
             this, [this](QString src, int baud) {
-        devices_panel_->clear();
         controller_->connectInterface(src, baud, 0);
     });
 
-    // controller → ② Sensores (datos en vivo, con talker).
+    // controller → ② Sensores (datos en vivo, con talker e interfaz).
     connect(controller_, &GatewayController::sentenceDetected,
             devices_panel_, &DevicesPanel::onSentenceDetected);
+
+    // Al desconectar una interfaz, sus tramas desaparecen del panel.
+    connect(controller_, &GatewayController::interfaceDisconnected,
+            devices_panel_, &DevicesPanel::removeInterface);
 
     // ② selección de trama → ③ IDL + ④ QoS auto.
     connect(devices_panel_, &DevicesPanel::tramaSelected, this,
@@ -123,6 +134,8 @@ void MainWindow::connectPanels() {
             conversions_panel_, &ConversionsPanel::onConversionAdded);
     connect(controller_, &GatewayController::conversionRemoved,
             conversions_panel_, &ConversionsPanel::onConversionRemoved);
+    connect(controller_, &GatewayController::conversionQoSChanged,
+            conversions_panel_, &ConversionsPanel::onConversionQoSChanged);
 
     // ⑤ eliminar → ② devuelve la trama a disponible.
     connect(conversions_panel_, &ConversionsPanel::deleteRequested,

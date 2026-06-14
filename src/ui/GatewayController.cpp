@@ -2,10 +2,6 @@
 #include "ui/GatewayController.hpp"
 
 #include <QMetaObject>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -82,7 +78,7 @@ GatewayController::GatewayController(QObject* parent)
 }
 
 GatewayController::~GatewayController() {
-    disconnectInterface();
+    disconnectAll();
     stopScan();
 }
 
@@ -116,10 +112,13 @@ std::unique_ptr<nmea::ISource> GatewayController::makeSource(
 
 void GatewayController::connectInterface(const QString& source, int baud,
                                           int domainId) {
-    disconnectInterface();
+    if (pipelines_.count(source)) {
+        emit interfaceError(source, "La interfaz ya está conectada");
+        return;
+    }
     auto src = makeSource(source, baud);
     if (!src) {
-        emit networkDiagResult("Conexión", false, "No se pudo abrir " + source);
+        emit interfaceError(source, "No se pudo abrir " + source);
         return;
     }
     nmea::Pipeline::Config cfg;
@@ -128,7 +127,7 @@ void GatewayController::connectInterface(const QString& source, int baud,
     cfg.domain_id      = domainId;
     cfg.publish_to_dds = true;       // el plan decide qué se publica (arranca vacío)
     cfg.plan           = &publish_plan_;
-    cfg.on_sentence = [this](std::string talker, std::string formatter,
+    cfg.on_sentence = [this, source](std::string talker, std::string formatter,
                               std::string category,
                               std::vector<std::string> names,
                               std::vector<std::string> values) {
@@ -138,23 +137,46 @@ void GatewayController::connectInterface(const QString& source, int baud,
         const QString tk  = QString::fromStdString(talker);
         const QString fmt = QString::fromStdString(formatter);
         const QString cat = QString::fromStdString(category);
-        QMetaObject::invokeMethod(this, [this, tk, fmt, cat, qnames, qvalues]() {
+        QMetaObject::invokeMethod(this, [this, source, tk, fmt, cat, qnames, qvalues]() {
             auto& rt = rate_trackers_[(tk + "|" + fmt).toStdString()];
             rt.last_count++;
-            emit sentenceDetected(tk, fmt, cat, qnames, qvalues, rt.rate_hz);
+            iface_rates_[source].last_count++;
+            emit sentenceDetected(source, tk, fmt, cat, qnames, qvalues, rt.rate_hz);
         }, Qt::QueuedConnection);
     };
-    iface_pipeline_ = std::make_unique<nmea::Pipeline>(std::move(cfg));
-    iface_pipeline_->start();
+    auto pipe = std::make_unique<nmea::Pipeline>(std::move(cfg));
+    pipe->start();
+    pipelines_[source] = std::move(pipe);
+    emit interfaceConnected(source);
 }
 
-void GatewayController::disconnectInterface() {
-    if (iface_pipeline_) {
-        iface_pipeline_->stop();
-        iface_pipeline_.reset();
-    }
-    rate_trackers_.clear();
+void GatewayController::disconnectInterface(const QString& source) {
+    auto it = pipelines_.find(source);
+    if (it == pipelines_.end()) return;
+    it->second->stop();
+    pipelines_.erase(it);
+    iface_rates_.erase(source);
+    emit interfaceDisconnected(source);
 }
+
+void GatewayController::disconnectAll() {
+    for (auto& [src, pipe] : pipelines_) pipe->stop();
+    pipelines_.clear();
+    rate_trackers_.clear();
+    iface_rates_.clear();
+}
+
+namespace {
+QString qosLabel(const QoSProfile& p) {
+    QString s;
+    if (!p.name.empty()) s += QString::fromStdString(p.name) + " · ";
+    s += p.reliable ? "RELIABLE" : "BEST_EFFORT";
+    s += p.transient_local ? "/TL" : "/VOL";
+    if (p.deadline_ms > 0) s += QString(" d%1").arg(p.deadline_ms);
+    if (p.lifespan_ms > 0) s += QString(" l%1").arg(p.lifespan_ms);
+    return s;
+}
+}  // namespace
 
 void GatewayController::addConversion(const QString& talker,
                                        const QString& formatter,
@@ -167,7 +189,26 @@ void GatewayController::addConversion(const QString& talker,
     nmea::Mapper mapper(registry_);
     const auto info = mapper.resolve((talker + formatter).toStdString());
     emit conversionAdded(talker, formatter, deviceId,
-                         QString::fromStdString(info.topic_name));
+                         QString::fromStdString(info.topic_name), qosLabel(qos));
+}
+
+QoSProfile GatewayController::conversionQoS(const QString& talker,
+                                            const QString& formatter) const {
+    const auto t = publish_plan_.resolve(talker.toStdString(), formatter.toStdString());
+    if (!t) return {};
+    return QoSProfile{"", t->qos.reliable, t->qos.transient_local,
+                      t->qos.deadline_ms, t->qos.lifespan_ms};
+}
+
+void GatewayController::updateConversionQoS(const QString& talker,
+                                            const QString& formatter,
+                                            const QoSProfile& qos) {
+    const auto t = publish_plan_.resolve(talker.toStdString(), formatter.toStdString());
+    if (!t) return;
+    publish_plan_.add(talker.toStdString(), formatter.toStdString(), t->device_id,
+                      nmea::Pipeline::QosSettings{qos.reliable, qos.transient_local,
+                                                  qos.deadline_ms, qos.lifespan_ms});
+    emit conversionQoSChanged(talker, formatter, qosLabel(qos));
 }
 
 void GatewayController::removeConversion(const QString& talker,
@@ -181,44 +222,10 @@ void GatewayController::pollPipelines() {
         rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
         rt.prev_count = rt.last_count;
     }
-}
-
-void GatewayController::runNetworkDiagnostics() {
-    {
-        int s = socket(AF_INET, SOCK_DGRAM, 0);
-        bool ok = false;
-        if (s >= 0) {
-            struct ip_mreq mreq{};
-            mreq.imr_multiaddr.s_addr = inet_addr("239.255.0.1");
-            mreq.imr_interface.s_addr = INADDR_ANY;
-            ok = (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) == 0);
-            if (ok) setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
-            ::close(s);
-        }
-        emit networkDiagResult("Multicast SPDP 239.255.0.1", ok,
-                               ok ? "Grupo multicast accesible" : "No se pudo unir al grupo multicast");
-    }
-    {
-        int s = socket(AF_INET, SOCK_DGRAM, 0);
-        bool ok = false;
-        if (s >= 0) {
-            struct sockaddr_in addr{};
-            addr.sin_family      = AF_INET;
-            addr.sin_addr.s_addr = INADDR_ANY;
-            addr.sin_port        = htons(7400);
-            int reuseaddr = 1;
-            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr));
-            ok = (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
-            ::close(s);
-        }
-        emit networkDiagResult("Puerto UDP 7400 (RTPS base)", ok,
-                               ok ? "Puerto disponible" : "Puerto bloqueado o en uso");
-    }
-    {
-        const char* env = std::getenv("FASTRTPS_DEFAULT_PROFILES_FILE");
-        const bool ok = (env != nullptr && env[0] != '\0');
-        emit networkDiagResult("FASTRTPS_DEFAULT_PROFILES_FILE", ok,
-                               ok ? QString("Apunta a: ") + env : "Variable no definida (se usan defaults)");
+    for (auto& [src, rt] : iface_rates_) {
+        rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
+        rt.prev_count = rt.last_count;
+        emit interfaceRate(src, rt.rate_hz);
     }
 }
 
