@@ -4,6 +4,17 @@
 
 using namespace nmea::ros;
 
+TEST(RosPublisherClass, EnablePublishDisableNoThrow) {
+    RosPublisher pub;
+    RosTarget tg{RosTarget::Imu, "/imu/data", "imu_link"};
+    pub.enable("", "VNYPR", tg);
+    pub.onSentence("", "GLL", "GPS", {}, {});           // par no habilitado: no-op
+    pub.onSentence("", "VNYPR", "Inertial",
+                   {"yaw","pitch","roll"}, {"90.0","0.0","0.0"});  // publica
+    pub.disable("", "VNYPR");
+    SUCCEED();
+}
+
 TEST(RosMapping, NavSatFixFromNmeaDdmm) {
     builtin_interfaces::msg::Time t;
     auto msg = navSatFixFromFields(

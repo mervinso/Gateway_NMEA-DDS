@@ -94,13 +94,54 @@ sensor_msgs::msg::NavSatFix navSatFixFromFields(
 }
 
 RosPublisher::RosPublisher() = default;
-RosPublisher::~RosPublisher() = default;
 
-void RosPublisher::ensureNode() {}
-void RosPublisher::enable(const std::string&, const std::string&, const RosTarget&) {}
-void RosPublisher::disable(const std::string&, const std::string&) {}
-void RosPublisher::onSentence(const std::string&, const std::string&,
-                              const std::string&, const std::vector<std::string>&,
-                              const std::vector<std::string>&) {}
+RosPublisher::~RosPublisher() {
+    std::lock_guard<std::mutex> lk(mu_);
+    pubs_.clear();
+    node_.reset();
+    // No rclcpp::shutdown: el contexto vive lo que dure el proceso.
+}
+
+void RosPublisher::ensureNode() {
+    // Pre-condición: mu_ tomado por el llamador.
+    if (node_) return;
+    if (!rclcpp::ok()) rclcpp::init(0, nullptr);
+    node_ = std::make_shared<rclcpp::Node>("gateway_nema_dds");
+}
+
+void RosPublisher::enable(const std::string& talker, const std::string& formatter,
+                          const RosTarget& target) {
+    std::lock_guard<std::mutex> lk(mu_);
+    ensureNode();
+    auto p = std::make_unique<Pub>();
+    p->target = target;
+    if (target.type == RosTarget::Imu)
+        p->imu = node_->create_publisher<sensor_msgs::msg::Imu>(
+                target.topic, rclcpp::QoS(10));
+    else
+        p->fix = node_->create_publisher<sensor_msgs::msg::NavSatFix>(
+                target.topic, rclcpp::QoS(10));
+    pubs_[key(talker, formatter)] = std::move(p);
+}
+
+void RosPublisher::disable(const std::string& talker, const std::string& formatter) {
+    std::lock_guard<std::mutex> lk(mu_);
+    pubs_.erase(key(talker, formatter));
+}
+
+void RosPublisher::onSentence(const std::string& talker, const std::string& formatter,
+                              const std::string& /*category*/,
+                              const std::vector<std::string>& names,
+                              const std::vector<std::string>& values) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = pubs_.find(key(talker, formatter));
+    if (it == pubs_.end() || !node_) return;
+    const RosTarget& tg = it->second->target;
+    const builtin_interfaces::msg::Time stamp = node_->now();  // rclcpp::Time -> msg
+    if (tg.type == RosTarget::Imu)
+        it->second->imu->publish(imuFromFields(names, values, tg.frame_id, stamp));
+    else
+        it->second->fix->publish(navSatFixFromFields(names, values, tg.frame_id, stamp));
+}
 
 }  // namespace nmea::ros
