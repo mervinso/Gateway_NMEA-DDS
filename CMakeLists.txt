@@ -4,6 +4,11 @@ project(gateway_nema_dds CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Las libs núcleo son estáticas por diseño. find_package(rclcpp)/ament pone
+# BUILD_SHARED_LIBS=ON en cache; lo fijamos OFF (variable normal, sombrea la cache)
+# para que nmea_parser/registry/pipeline/mapper sigan siendo .a (sin -fPIC).
+set(BUILD_SHARED_LIBS OFF)
+
 # Núcleo del parser (hot path, freestanding): sin excepciones para hacer cumplir
 # la disciplina sin-asignación / determinista (ver CONTEXT.md y docs/adr).
 add_library(nmea_parser src/parser/Parser.cpp)
