@@ -2,11 +2,14 @@
 #include "ui/panels/IdlPreviewPanel.hpp"
 #include "ui/GatewayController.hpp"
 
+#include <QCheckBox>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileDialog>
 #include <QFile>
+#include <QLineEdit>
 #include <QTextStream>
 #include <QFont>
 
@@ -73,6 +76,24 @@ IdlPreviewPanel::IdlPreviewPanel(GatewayController* ctrl, QWidget* parent)
     idl_view_->setMinimumHeight(120);
     inner->addWidget(idl_view_);
 
+    ros_check_ = new QCheckBox("Publicar como ROS");
+    ros_check_->setEnabled(false);
+    ros_topic_ = new QLineEdit;
+    ros_topic_->setPlaceholderText("tópico ROS (ej. /imu/data)");
+    ros_topic_->setEnabled(false);
+    ros_frame_ = new QLineEdit;
+    ros_frame_->setPlaceholderText("frame_id (ej. imu_link)");
+    ros_frame_->setEnabled(false);
+    connect(ros_check_, &QCheckBox::toggled, this, [this](bool on) {
+        ros_topic_->setEnabled(on);
+        ros_frame_->setEnabled(on);
+    });
+    auto* ros_form = new QFormLayout;
+    ros_form->addRow(ros_check_);
+    ros_form->addRow("Tópico:", ros_topic_);
+    ros_form->addRow("Frame:",  ros_frame_);
+    inner->addLayout(ros_form);
+
     auto* btn_row = new QHBoxLayout;
     save_btn_    = new QPushButton("📄 Guardar IDL…");
     convert_btn_ = new QPushButton("✅ Convertir");
@@ -119,5 +140,16 @@ void IdlPreviewPanel::onSaveClicked() {
 void IdlPreviewPanel::onConvertClicked() {
     if (!formatter_.isEmpty()) emit convertRequested();
 }
+
+void IdlPreviewPanel::configureRos(bool supported, const QString& defaultTopic,
+                                   const QString& defaultFrame) {
+    ros_check_->setEnabled(supported);
+    if (!supported) ros_check_->setChecked(false);
+    ros_topic_->setText(defaultTopic);
+    ros_frame_->setText(defaultFrame);
+}
+bool    IdlPreviewPanel::rosChecked() const { return ros_check_->isChecked(); }
+QString IdlPreviewPanel::rosTopic()   const { return ros_topic_->text(); }
+QString IdlPreviewPanel::rosFrame()   const { return ros_frame_->text(); }
 
 }  // namespace nmea::ui

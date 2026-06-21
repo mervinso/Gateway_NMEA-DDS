@@ -9,6 +9,7 @@
 #include "ui/panels/DdsMonitorPanel.hpp"
 #include "ui/QoSRecommender.hpp"
 #include "registry/Registry.hpp"
+#include "ros/RosPublisher.hpp"
 
 #include <QApplication>
 #include <QFontMetrics>
@@ -91,6 +92,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void MainWindow::connectPanels() {
+    static QString last_category;   // categoría de la última trama seleccionada
+
     // ① Interfaces → controller: abre la interfaz (preview + publicación selectiva).
     connect(interfaces_panel_, &InterfacesPanel::connected,
             this, [this](QString src, int baud) {
@@ -107,11 +110,17 @@ void MainWindow::connectPanels() {
 
     // ② selección de trama → ③ IDL + ④ QoS auto.
     connect(devices_panel_, &DevicesPanel::tramaSelected, this,
-            [this](QString talker, QString formatter, QString category,
+            [this](QString /*talker*/, QString formatter, QString category,
                    QString /*proposedId*/, double rateHz) {
         idl_panel_->showFormatter(formatter);
         const nmea::Category cat = categoryFromName(category);
         qos_panel_->setProfile(nmea::QoSRecommender::recommend(cat, rateHz));
+        last_category = category;
+        const bool isImu = (category == "Inertial");
+        const bool isGps = (category == "GPS");
+        idl_panel_->configureRos(isImu || isGps,
+                                 isImu ? "/imu/data" : (isGps ? "/gps/fix" : ""),
+                                 isImu ? "imu_link"  : (isGps ? "gps"      : ""));
     });
 
     // ③ Convertir → controller.addConversion con datos de ②/④.
@@ -126,6 +135,17 @@ void MainWindow::connectPanels() {
         controller_->addConversion(talker, formatter, devId,
                                    qos_panel_->currentProfile());
         devices_panel_->markConverted(talker, formatter);
+        if (idl_panel_->rosChecked()) {
+            nmea::ros::RosTarget tg;
+            tg.type     = (last_category == "Inertial")
+                          ? nmea::ros::RosTarget::Imu
+                          : nmea::ros::RosTarget::NavSatFix;
+            tg.topic    = idl_panel_->rosTopic().toStdString();
+            tg.frame_id = idl_panel_->rosFrame().toStdString();
+            controller_->enableRos(talker, formatter, tg);
+            conversions_panel_->markRos(talker, formatter,
+                                        "rt" + idl_panel_->rosTopic());
+        }
         statusBar()->showMessage("Tópico creado: " + formatter);
     });
 
