@@ -3,10 +3,8 @@
 
 #include <QMetaObject>
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
 #include <functional>
-#include <thread>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
@@ -68,6 +66,15 @@ public:
     }
 };
 
+// Lector DDS persistente para la lectura "en vivo" de un tópico desde el Monitor.
+struct GatewayController::SampleStream {
+    eprosima::fastdds::dds::Subscriber*            sub{nullptr};
+    eprosima::fastdds::dds::DataReader*            reader{nullptr};
+    eprosima::fastdds::dds::Topic*                 topic{nullptr};
+    eprosima::fastdds::dds::DynamicType::_ref_type type;
+    QString                                        last;
+};
+
 GatewayController::GatewayController(QObject* parent)
     : QObject(parent)
     , registry_(nmea::Registry::builtin())
@@ -79,6 +86,7 @@ GatewayController::GatewayController(QObject* parent)
 
 GatewayController::~GatewayController() {
     disconnectAll();
+    stopSampleStream();
     stopScan();
 }
 
@@ -294,9 +302,10 @@ static QString dynamicDataToString(
     return out;
 }
 
-QString GatewayController::readTopicSample(const QString& topicName,
-                                           const QString& typeName) {
+QString GatewayController::startSampleStream(const QString& topicName,
+                                             const QString& typeName) {
     using namespace eprosima::fastdds::dds;
+    stopSampleStream();  // garantiza un solo lector activo
     if (!monitor_participant_)
         return "Inicia un barrido en el Monitor antes de leer un sample.";
 
@@ -326,32 +335,48 @@ QString GatewayController::readTopicSample(const QString& topicName,
     // BEST_EFFORT casa con writers BEST_EFFORT y RELIABLE (ofrecido ≥ pedido).
     rq.reliability().kind = BEST_EFFORT_RELIABILITY_QOS;
     DataReader* reader = sub ? sub->create_datareader(topic, rq) : nullptr;
-
-    QString result = "Sin datos en 3 s. ¿Hay una conversión publicando "
-                     "este tópico ahora mismo?";
     if (!reader) {
-        result = "No se pudo crear el lector.";
-    } else {
-        // Sondea take_next_sample hasta ~3 s (wait_for_unread_message no es
-        // fiable aquí; el sondeo sí entrega la muestra).
-        for (int i = 0; i < 60; ++i) {
-            DynamicData::_ref_type sample =
-                    DynamicDataFactory::get_instance()->create_data(dyn_type);
-            SampleInfo info;
-            if (reader->take_next_sample(&sample, &info) == RETCODE_OK && info.valid_data) {
-                result = dynamicDataToString(dyn_type, sample);
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
+        if (sub) monitor_participant_->delete_subscriber(sub);
+        monitor_participant_->delete_topic(topic);
+        return "No se pudo crear el lector.";
     }
 
-    if (sub) {
-        if (reader) sub->delete_datareader(reader);
-        monitor_participant_->delete_subscriber(sub);
+    sample_stream_ = std::make_unique<SampleStream>();
+    sample_stream_->sub    = sub;
+    sample_stream_->reader = reader;
+    sample_stream_->topic  = topic;
+    sample_stream_->type   = dyn_type;
+    sample_stream_->last   = "Esperando datos…";
+    return {};
+}
+
+QString GatewayController::pollSampleStream() {
+    using namespace eprosima::fastdds::dds;
+    if (!sample_stream_) return "Lector cerrado.";
+    // Drena las muestras disponibles y conserva la más reciente válida, de modo
+    // que cada sondeo refleje el último dato que el sensor está enviando.
+    for (;;) {
+        DynamicData::_ref_type sample =
+                DynamicDataFactory::get_instance()->create_data(sample_stream_->type);
+        SampleInfo info;
+        if (sample_stream_->reader->take_next_sample(&sample, &info) != RETCODE_OK)
+            break;
+        if (info.valid_data)
+            sample_stream_->last = dynamicDataToString(sample_stream_->type, sample);
     }
-    monitor_participant_->delete_topic(topic);
-    return result;
+    return sample_stream_->last;
+}
+
+void GatewayController::stopSampleStream() {
+    if (!sample_stream_) return;
+    if (sample_stream_->sub) {
+        if (sample_stream_->reader)
+            sample_stream_->sub->delete_datareader(sample_stream_->reader);
+        monitor_participant_->delete_subscriber(sample_stream_->sub);
+    }
+    if (sample_stream_->topic)
+        monitor_participant_->delete_topic(sample_stream_->topic);
+    sample_stream_.reset();
 }
 
 void GatewayController::stopScan() {

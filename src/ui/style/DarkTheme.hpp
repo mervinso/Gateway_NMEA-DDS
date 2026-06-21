@@ -20,8 +20,8 @@ QGroupBox {
     background-color: #1e293b;
     border: 1px solid #334155;
     border-radius: 4px;
-    margin-top: 32px;
-    padding-top: 14px;
+    margin-top: 44px;
+    padding-top: 18px;
 }
 QGroupBox::title {
     color: #f59e0b;
@@ -31,7 +31,7 @@ QGroupBox::title {
     subcontrol-position: top left;
     left: 10px;
     top: 0px;
-    padding: 4px 8px 6px 8px;
+    padding: 10px 10px 10px 10px;
     background-color: #1e293b;
 }
 QComboBox, QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit {

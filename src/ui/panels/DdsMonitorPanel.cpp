@@ -7,8 +7,11 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QPushButton>
-#include <QApplication>
 #include <QMessageBox>
+#include <QDialog>
+#include <QTimer>
+#include <QLabel>
+#include <QFont>
 
 namespace nmea::ui {
 
@@ -79,16 +82,40 @@ void DdsMonitorPanel::onReadSampleClicked() {
     const QString type = model_->data(
             model_->index(idx.row(), DdsTopicModel::Type)).toString();
 
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const QString sample = ctrl_->readTopicSample(topic, type);
-    QApplication::restoreOverrideCursor();
+    const QString err = ctrl_->startSampleStream(topic, type);
+    if (!err.isEmpty()) {
+        QMessageBox::information(this, "Leer sample", err);
+        return;
+    }
 
-    QMessageBox box(this);
-    box.setWindowTitle("Sample: " + topic);
-    box.setText("<b>" + type + "</b>");
-    box.setInformativeText(sample);
-    box.setIcon(QMessageBox::Information);
-    box.exec();
+    // Diálogo de lectura en vivo: un QTimer refresca el último dato recibido
+    // mientras la ventana está abierta; al cerrarla se libera el lector.
+    QDialog dlg(this);
+    dlg.setWindowTitle("Sample en vivo: " + topic);
+    auto* lay  = new QVBoxLayout(&dlg);
+    auto* head = new QLabel("<b>" + type + "</b> &nbsp;&nbsp;🔴 en vivo");
+    head->setTextFormat(Qt::RichText);
+    auto* body = new QLabel("Esperando datos…");
+    body->setTextFormat(Qt::PlainText);
+    QFont mono("monospace");
+    mono.setStyleHint(QFont::Monospace);
+    body->setFont(mono);
+    body->setMinimumWidth(360);
+    auto* close_btn = new QPushButton("Cerrar");
+    lay->addWidget(head);
+    lay->addWidget(body);
+    lay->addWidget(close_btn);
+    connect(close_btn, &QPushButton::clicked, &dlg, &QDialog::accept);
+
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, &dlg, [this, body]() {
+        body->setText(ctrl_->pollSampleStream());
+    });
+    timer.start(200);  // 5 Hz de refresco
+
+    dlg.exec();
+    timer.stop();
+    ctrl_->stopSampleStream();
 }
 
 void DdsMonitorPanel::onTopicDiscovered(int, QString topicName, QString typeName,

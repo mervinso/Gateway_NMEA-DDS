@@ -46,11 +46,15 @@ public:
     void scanDomain(int domainId);
     void stopScan();
 
-    // Lee una muestra del tópico indicado y la devuelve formateada como texto.
-    // Reconstruye el DynamicType desde el registro (tipos del gateway "Nmea<FMT>"
-    // / "RawSentence"). Bloquea hasta ~3 s esperando un dato. Requiere un barrido
-    // activo (participante del monitor en el dominio).
-    QString readTopicSample(const QString& topicName, const QString& typeName);
+    // Lectura en vivo de un tópico: abre un lector persistente (startSampleStream),
+    // entrega la última muestra formateada en cada sondeo (pollSampleStream) y lo
+    // cierra al terminar (stopSampleStream). Reconstruye el DynamicType desde el
+    // registro (tipos del gateway "Nmea<FMT>" / "RawSentence"). Requiere un barrido
+    // activo (participante del monitor en el dominio). startSampleStream devuelve
+    // "" si abrió bien, o un mensaje de error.
+    QString startSampleStream(const QString& topicName, const QString& typeName);
+    QString pollSampleStream();
+    void    stopSampleStream();
 
     const Registry& registry() const { return registry_; }
 
@@ -89,6 +93,8 @@ private:
     // Monitor DDS: participante de solo-descubrimiento por dominio.
     eprosima::fastdds::dds::DomainParticipant* monitor_participant_{nullptr};
     std::unique_ptr<MonitorListener> monitor_listener_;
+    struct SampleStream;                              // definido en el .cpp
+    std::unique_ptr<SampleStream> sample_stream_;     // lector en vivo activo
     struct TopicAgg { std::string typeName; int pub{0}; int sub{0}; };
     std::map<std::string, TopicAgg> topic_agg_;
     int monitor_domain_{0};
