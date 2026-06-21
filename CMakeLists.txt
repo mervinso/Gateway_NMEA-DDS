@@ -28,6 +28,15 @@ target_compile_options(nmea_capture PRIVATE -Wall -Wextra)
 # Fast DDS (requerido por mapper y pipeline).
 find_package(fastdds 3 REQUIRED HINTS /opt/ros/lyrical/share/fastdds/cmake)
 
+# ── Publicación ROS (Imu/NavSatFix): capa de app, fuera del núcleo ────────────
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
+add_library(nmea_ros src/ros/RosPublisher.cpp)
+target_include_directories(nmea_ros PUBLIC src)
+target_link_libraries(nmea_ros PUBLIC rclcpp::rclcpp ${sensor_msgs_TARGETS})
+target_compile_options(nmea_ros PRIVATE -Wall -Wextra)
+
 # Pipeline: hilo POSIX read→parse→map→publish (D9/D13).
 add_library(nmea_pipeline src/pipeline/Pipeline.cpp src/pipeline/PublishPlan.cpp)
 target_include_directories(nmea_pipeline PUBLIC src)
@@ -63,7 +72,7 @@ target_include_directories(gateway_app PRIVATE src)
 target_link_libraries(gateway_app PRIVATE
     nmea_pipeline nmea_mapper nmea_registry nmea_capture
     Qt6::Widgets Qt6::SerialPort Qt6::Network
-    fastdds)
+    fastdds nmea_ros)
 target_compile_options(gateway_app PRIVATE -Wall -Wextra)
 
 enable_testing()
@@ -77,25 +86,25 @@ target_link_libraries(verify_live PRIVATE nmea_pipeline nmea_mapper nmea_registr
 add_executable(test_multi_iface tools/test_multi_iface.cpp src/ui/GatewayController.cpp)
 target_include_directories(test_multi_iface PRIVATE src)
 target_link_libraries(test_multi_iface PRIVATE
-    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
 
 # Arnés headless: lectura serial real por la ruta de producción.
 add_executable(test_serial tools/test_serial.cpp src/ui/GatewayController.cpp)
 target_include_directories(test_serial PRIVATE src)
 target_link_libraries(test_serial PRIVATE
-    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
 
 # Arnés headless: edición de QoS en vivo (recreación de writer).
 add_executable(test_qos tools/test_qos.cpp src/ui/GatewayController.cpp)
 target_include_directories(test_qos PRIVATE src)
 target_link_libraries(test_qos PRIVATE
-    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
 
 # Validación interop: publicador de larga duración (datos reales del gateway).
 add_executable(pub_hold tools/pub_hold.cpp src/ui/GatewayController.cpp)
 target_include_directories(pub_hold PRIVATE src)
 target_link_libraries(pub_hold PRIVATE
-    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds)
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
 
 # Validación interop: suscriptor DDS independiente (sin IDL del gateway).
 add_executable(dds_dynamic_sub tools/dds_dynamic_sub.cpp)
