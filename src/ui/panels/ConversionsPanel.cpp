@@ -113,6 +113,10 @@ void ConversionsPanel::onConversionQoSChanged(QString talker, QString formatter,
     }
 }
 
+void ConversionsPanel::markRos(QString talker, QString formatter, QString rosTopic) {
+    model_->setRos(talker, formatter, rosTopic);
+}
+
 void ConversionsPanel::onConversionRemoved(QString talker, QString formatter) {
     for (int i = 0; i < model_->rowCount(); ++i) {
         const ConversionRow* r = model_->at(i);
