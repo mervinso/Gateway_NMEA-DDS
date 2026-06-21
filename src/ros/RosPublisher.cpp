@@ -60,9 +60,37 @@ sensor_msgs::msg::Imu imuFromFields(
 }
 
 sensor_msgs::msg::NavSatFix navSatFixFromFields(
-        const std::vector<std::string>&, const std::vector<std::string>&,
-        const std::string&, const builtin_interfaces::msg::Time&) {
-    return {};
+        const std::vector<std::string>& names,
+        const std::vector<std::string>& values,
+        const std::string& frame_id,
+        const builtin_interfaces::msg::Time& stamp) {
+    sensor_msgs::msg::NavSatFix msg;
+    msg.header.frame_id = frame_id;
+    msg.header.stamp = stamp;
+
+    auto toDeg = [](const std::string& ddmm, const std::string& hemi) -> double {
+        if (ddmm.empty()) return std::numeric_limits<double>::quiet_NaN();
+        const double v   = std::strtod(ddmm.c_str(), nullptr);
+        const double deg = std::floor(v / 100.0);
+        const double min = v - deg * 100.0;
+        double dec = deg + min / 60.0;
+        if (hemi == "S" || hemi == "W") dec = -dec;
+        return dec;
+    };
+    msg.latitude  = toDeg(fieldValue(names, values, "latitude"),
+                          fieldValue(names, values, "ns_indicator"));
+    msg.longitude = toDeg(fieldValue(names, values, "longitude"),
+                          fieldValue(names, values, "ew_indicator"));
+
+    const std::string alt = fieldValue(names, values, "altitude");  // solo GGA
+    msg.altitude = alt.empty() ? std::numeric_limits<double>::quiet_NaN()
+                               : std::strtod(alt.c_str(), nullptr);
+
+    msg.status.status  = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
+    msg.status.service = sensor_msgs::msg::NavSatStatus::SERVICE_GPS;
+    msg.position_covariance_type =
+        sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+    return msg;
 }
 
 RosPublisher::RosPublisher() = default;

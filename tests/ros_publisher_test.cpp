@@ -4,6 +4,18 @@
 
 using namespace nmea::ros;
 
+TEST(RosMapping, NavSatFixFromNmeaDdmm) {
+    builtin_interfaces::msg::Time t;
+    auto msg = navSatFixFromFields(
+        {"latitude","ns_indicator","longitude","ew_indicator"},
+        {"0816.249979","N","07932.749980","W"}, "gps", t);
+    EXPECT_NEAR(msg.latitude,    8.270833, 1e-4);
+    EXPECT_NEAR(msg.longitude, -79.545833, 1e-4);
+    EXPECT_EQ(msg.header.frame_id, "gps");
+    EXPECT_EQ(msg.status.status, sensor_msgs::msg::NavSatStatus::STATUS_FIX);
+    EXPECT_TRUE(std::isnan(msg.altitude));
+}
+
 TEST(RosMapping, ImuFromYaw90) {
     builtin_interfaces::msg::Time t;  // stamp cero: no afecta la orientación
     auto msg = imuFromFields({"yaw","pitch","roll"}, {"90.0","0.0","0.0"},
