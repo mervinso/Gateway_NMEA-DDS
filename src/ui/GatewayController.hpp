@@ -15,6 +15,7 @@
 #include "ui/QoSRecommender.hpp"
 
 namespace eprosima::fastdds::dds { class DomainParticipant; }
+namespace nmea::ros { class RosPublisher; struct RosTarget; }
 
 namespace nmea::ui {
 
@@ -45,6 +46,11 @@ public:
 
     void scanDomain(int domainId);
     void stopScan();
+
+    // Habilita/Deshabilita la publicación ROS (Imu/NavSatFix) de una conversión.
+    void enableRos(const QString& talker, const QString& formatter,
+                   const nmea::ros::RosTarget& target);
+    void disableRos(const QString& talker, const QString& formatter);
 
     // Lectura en vivo de un tópico: abre un lector persistente (startSampleStream),
     // entrega la última muestra formateada en cada sondeo (pollSampleStream) y lo
@@ -85,6 +91,7 @@ private:
     nmea::PublishPlan publish_plan_;
     std::map<QString, std::unique_ptr<nmea::Pipeline>> pipelines_;
     QTimer* poll_timer_;
+    std::unique_ptr<nmea::ros::RosPublisher> ros_publisher_;
 
     struct RateTracker { quint64 last_count{0}; quint64 prev_count{0}; double rate_hz{0.0}; };
     std::map<std::string, RateTracker> rate_trackers_;   // por talker|formatter

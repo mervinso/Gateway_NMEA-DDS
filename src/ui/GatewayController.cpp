@@ -28,6 +28,7 @@
 #include "capture/TcpSource.hpp"
 #include "capture/UdpSource.hpp"
 #include "mapper/Mapper.hpp"
+#include "ros/RosPublisher.hpp"
 
 namespace nmea::ui {
 
@@ -80,6 +81,7 @@ GatewayController::GatewayController(QObject* parent)
     , registry_(nmea::Registry::builtin())
     , poll_timer_(new QTimer(this))
 {
+    ros_publisher_ = std::make_unique<nmea::ros::RosPublisher>();
     connect(poll_timer_, &QTimer::timeout, this, &GatewayController::pollPipelines);
     poll_timer_->start(100);  // 10 Hz
 }
@@ -139,6 +141,10 @@ void GatewayController::connectInterface(const QString& source, int baud,
                               std::string category,
                               std::vector<std::string> names,
                               std::vector<std::string> values) {
+        // Publicación ROS (si la conversión la tiene habilitada). Thread-safe;
+        // corre en el hilo worker, igual que la publicación DDS.
+        if (ros_publisher_)
+            ros_publisher_->onSentence(talker, formatter, category, names, values);
         QStringList qnames, qvalues;
         for (auto& n : names)  qnames  << QString::fromStdString(n);
         for (auto& v : values) qvalues << QString::fromStdString(v);
@@ -219,9 +225,19 @@ void GatewayController::updateConversionQoS(const QString& talker,
     emit conversionQoSChanged(talker, formatter, qosLabel(qos));
 }
 
+void GatewayController::enableRos(const QString& talker, const QString& formatter,
+                                  const nmea::ros::RosTarget& target) {
+    ros_publisher_->enable(talker.toStdString(), formatter.toStdString(), target);
+}
+
+void GatewayController::disableRos(const QString& talker, const QString& formatter) {
+    ros_publisher_->disable(talker.toStdString(), formatter.toStdString());
+}
+
 void GatewayController::removeConversion(const QString& talker,
                                           const QString& formatter) {
     publish_plan_.remove(talker.toStdString(), formatter.toStdString());
+    ros_publisher_->disable(talker.toStdString(), formatter.toStdString());
     emit conversionRemoved(talker, formatter);
 }
 
