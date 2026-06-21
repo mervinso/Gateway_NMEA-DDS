@@ -37,3 +37,11 @@ target_link_libraries(publish_plan_test PRIVATE nmea_pipeline GTest::gtest GTest
 add_test(NAME publish_plan_test COMMAND publish_plan_test)
 set_tests_properties(publish_plan_test PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=/opt/ros/lyrical/lib:/opt/ros/lyrical/lib/x86_64-linux-gnu")
+
+add_executable(ros_publisher_test ros_publisher_test.cpp)
+target_include_directories(ros_publisher_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(ros_publisher_test PRIVATE nmea_ros GTest::gtest GTest::gtest_main)
+add_test(NAME ros_publisher_test COMMAND ros_publisher_test)
+set_tests_properties(ros_publisher_test PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=/opt/ros/lyrical/lib:/opt/ros/lyrical/lib/x86_64-linux-gnu"
+    TIMEOUT 30)
