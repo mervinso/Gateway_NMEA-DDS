@@ -111,6 +111,12 @@ target_include_directories(pub_hold PRIVATE src)
 target_link_libraries(pub_hold PRIVATE
     nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
 
+# Arnés headless: validación GPS→ROS (NavSatFix) por la ruta de producción.
+add_executable(verify_gps_ros tools/verify_gps_ros.cpp)
+target_include_directories(verify_gps_ros PRIVATE src)
+target_link_libraries(verify_gps_ros PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture fastdds nmea_ros)
+
 # Validación interop: suscriptor DDS independiente (sin IDL del gateway).
 add_executable(dds_dynamic_sub tools/dds_dynamic_sub.cpp)
 target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)
