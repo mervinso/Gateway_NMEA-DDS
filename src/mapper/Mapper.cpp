@@ -234,9 +234,13 @@ DynamicData::_ref_type Mapper::map(const SentenceView& view,
 Mapper::SentenceInfo Mapper::resolve(std::string_view address) const {
     const std::string fmt = resolve_formatter(address);
     if (fmt.empty())
-        return {"", "nmea/raw/RawSentence", "RawSentence"};
+        return {"", "", "nmea/raw/RawSentence", "RawSentence"};
+    // talker = address menos el sufijo formatter (vacío si propietario, ej. "VNYMR").
+    std::string talker;
+    if (address.size() > fmt.size())
+        talker = std::string(address.substr(0, address.size() - fmt.size()));
     const SentenceDef* def = registry_.lookup(fmt);
-    return {fmt,
+    return {fmt, talker,
             "nmea/" + category_str(def->category) + "/" + fmt,
             "Nmea" + fmt};
 }

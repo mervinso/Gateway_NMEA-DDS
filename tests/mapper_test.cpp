@@ -145,3 +145,22 @@ TEST(Mapper, EmptyFieldDefaultsToZero) {
     EXPECT_EQ(data->get_float64_value(dgps_age, mid), RETCODE_OK);
     EXPECT_DOUBLE_EQ(dgps_age, 0.0);
 }
+
+TEST(Mapper, ResolveExposesTalker) {
+    const Registry reg = Registry::builtin();
+    const Mapper mapper(reg);
+
+    auto info = mapper.resolve("GPGGA");
+    EXPECT_EQ(info.formatter, "GGA");
+    EXPECT_EQ(info.talker,    "GP");
+
+    // Address propietario sin talker estándar → talker vacío.
+    auto vn = mapper.resolve("VNYMR");
+    EXPECT_EQ(vn.formatter, "VNYMR");
+    EXPECT_EQ(vn.talker,    "");
+
+    // Desconocido → raw, sin talker.
+    auto raw = mapper.resolve("ZZZZZ");
+    EXPECT_EQ(raw.formatter, "");
+    EXPECT_EQ(raw.talker,    "");
+}

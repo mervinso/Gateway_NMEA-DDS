@@ -13,6 +13,8 @@
 
 namespace nmea {
 
+class PublishPlan;  // definido en PublishPlan.hpp; el Config solo guarda un puntero
+
 // Una conversión NMEA→DDS en ejecución (D9/D13).
 // Cada instancia es un hilo POSIX independiente:
 //   read(source) → Parser FSM → Mapper → DynamicData → DataWriter
@@ -43,9 +45,15 @@ public:
         // Perfil QoS aplicado a cada DataWriter creado (D8).
         QosSettings qos{};
 
+        // Allowlist de tramas a publicar (no owned). Si es nullptr, el Pipeline
+        // publica TODAS las sentencias con device_id/qos globales (modo legacy).
+        // Si != nullptr, publica solo lo habilitado, con la clave de cada sensor.
+        PublishPlan* plan{nullptr};
+
         // Callback opcional invocado desde el hilo worker por cada sentencia válida.
         // Los strings son copias seguras (no string_view). Puede ser nullptr.
-        std::function<void(std::string formatter,
+        std::function<void(std::string talker,
+                           std::string formatter,
                            std::string category,
                            std::vector<std::string> field_names,
                            std::vector<std::string> field_values)> on_sentence;

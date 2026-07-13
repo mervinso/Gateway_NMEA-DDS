@@ -1,5 +1,6 @@
 #include "pipeline/Pipeline.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -17,6 +18,7 @@
 
 #include "mapper/Mapper.hpp"
 #include "parser/Parser.hpp"
+#include "pipeline/PublishPlan.hpp"
 
 namespace nmea {
 
@@ -31,32 +33,32 @@ struct DdsCtx {
         DataWriter*               writer{nullptr};
         TypeSupport               ts;
         DynamicType::_ref_type    dyn_type;  // retiene el tipo vivo (D6)
+        Pipeline::QosSettings     qos{};     // QoS con la que se creó el writer
     };
 
     DomainParticipant* participant{nullptr};
     Publisher*         publisher{nullptr};
-    Pipeline::QosSettings qos{};  // perfil aplicado a cada DataWriter (D8)
     std::unordered_map<std::string, WriterEntry> writers;  // key = formatter o "raw"
 
     // Traduce QosSettings neutrales a un DataWriterQos de Fast DDS.
-    DataWriterQos build_writer_qos() const {
+    DataWriterQos build_writer_qos(const Pipeline::QosSettings& q) const {
         DataWriterQos wq = DATAWRITER_QOS_DEFAULT;
-        wq.reliability().kind = qos.reliable ? RELIABLE_RELIABILITY_QOS
-                                             : BEST_EFFORT_RELIABILITY_QOS;
-        if (qos.transient_local) {
+        wq.reliability().kind = q.reliable ? RELIABLE_RELIABILITY_QOS
+                                           : BEST_EFFORT_RELIABILITY_QOS;
+        if (q.transient_local) {
             wq.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
             wq.history().kind    = KEEP_LAST_HISTORY_QOS;
             wq.history().depth   = 1;
         } else {
             wq.durability().kind = VOLATILE_DURABILITY_QOS;
         }
-        if (qos.deadline_ms > 0) {
-            wq.deadline().period = Duration_t(qos.deadline_ms / 1000,
-                    static_cast<uint32_t>((qos.deadline_ms % 1000) * 1000000));
+        if (q.deadline_ms > 0) {
+            wq.deadline().period = Duration_t(q.deadline_ms / 1000,
+                    static_cast<uint32_t>((q.deadline_ms % 1000) * 1000000));
         }
-        if (qos.lifespan_ms > 0) {
-            wq.lifespan().duration = Duration_t(qos.lifespan_ms / 1000,
-                    static_cast<uint32_t>((qos.lifespan_ms % 1000) * 1000000));
+        if (q.lifespan_ms > 0) {
+            wq.lifespan().duration = Duration_t(q.lifespan_ms / 1000,
+                    static_cast<uint32_t>((q.lifespan_ms % 1000) * 1000000));
         }
         return wq;
     }
@@ -68,10 +70,24 @@ struct DdsCtx {
     }
 
     // Obtiene o crea el DataWriter para el formatter dado.
-    DataWriter* get_or_create(const Mapper& mapper, const Mapper::SentenceInfo& info) {
+    DataWriter* get_or_create(const Mapper& mapper,
+                              const Mapper::SentenceInfo& info,
+                              const Pipeline::QosSettings& wqos) {
         const std::string key = info.formatter.empty() ? "raw" : info.formatter;
         auto it = writers.find(key);
-        if (it != writers.end()) return it->second.writer;
+        if (it != writers.end()) {
+            const auto& c = it->second.qos;
+            const bool same = c.reliable == wqos.reliable
+                           && c.transient_local == wqos.transient_local
+                           && c.deadline_ms == wqos.deadline_ms
+                           && c.lifespan_ms == wqos.lifespan_ms;
+            if (same) return it->second.writer;
+            // La QoS cambió. Reliability/Durability son inmutables en DDS, así que
+            // se destruye el writer y se recrea con la nueva QoS (lag de un ciclo).
+            if (it->second.writer) publisher->delete_datawriter(it->second.writer);
+            if (it->second.topic)  participant->delete_topic(it->second.topic);
+            writers.erase(it);
+        }
 
         DynamicType::_ref_type dyn_type = info.formatter.empty()
                 ? mapper.raw_sentence_type()
@@ -87,11 +103,12 @@ struct DdsCtx {
         WriterEntry entry;
         entry.ts       = ts;
         entry.dyn_type = dyn_type;  // mantiene el DynamicType vivo
+        entry.qos      = wqos;      // recuerda la QoS para detectar cambios
         entry.topic  = participant->create_topic(
                 info.topic_name, info.type_name, TOPIC_QOS_DEFAULT);
         if (!entry.topic) return nullptr;
 
-        entry.writer = publisher->create_datawriter(entry.topic, build_writer_qos());
+        entry.writer = publisher->create_datawriter(entry.topic, build_writer_qos(wqos));
         if (!entry.writer) {
             participant->delete_topic(entry.topic);
             return nullptr;
@@ -100,6 +117,19 @@ struct DdsCtx {
         DataWriter* w = entry.writer;
         writers.emplace(key, std::move(entry));
         return w;
+    }
+
+    // Elimina los writers cuyo formatter ya no está en la allowlist `active`.
+    void reconcile(const std::vector<std::string>& active) {
+        for (auto it = writers.begin(); it != writers.end(); ) {
+            if (std::find(active.begin(), active.end(), it->first) == active.end()) {
+                if (it->second.writer) publisher->delete_datawriter(it->second.writer);
+                if (it->second.topic)  participant->delete_topic(it->second.topic);
+                it = writers.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     void cleanup() {
@@ -144,7 +174,6 @@ std::string Pipeline::error_message() const { return error_msg_; }
 void Pipeline::worker_loop() {
     // ── DDS setup ──────────────────────────────────────────────────────────
     DdsCtx ctx;
-    ctx.qos = cfg_.qos;
     if (cfg_.publish_to_dds) {
         ctx.participant = DomainParticipantFactory::get_instance()
                 ->create_participant(cfg_.domain_id, PARTICIPANT_QOS_DEFAULT);
@@ -184,6 +213,9 @@ void Pipeline::worker_loop() {
                 const auto& sv   = parser.sentence();
                 const auto  info = mapper.resolve(sv.address);
 
+                // talker ya viene resuelto en SentenceInfo (mismo cálculo que el Mapper).
+                const std::string talker = info.talker;
+
                 // Callback de preview (hilo worker → main thread via invokeMethod).
                 if (cfg_.on_sentence) {
                     const SentenceDef* def = info.formatter.empty()
@@ -196,30 +228,56 @@ void Pipeline::worker_loop() {
                             values.push_back(std::string(sv.fields[i]));
                         }
                     }
-                    cfg_.on_sentence(info.formatter,
+                    cfg_.on_sentence(talker, info.formatter,
                                      category_name(def ? def->category : Category::GPS),
                                      std::move(names), std::move(values));
                 }
 
                 // Publicar solo si DDS está activo.
                 if (cfg_.publish_to_dds) {
-                    DataWriter* w = ctx.get_or_create(mapper, info);
-                    if (!w) continue;
-                    const std::string ekey = info.formatter.empty() ? "raw" : info.formatter;
-                    auto* entry = ctx.get_entry(ekey);
-                    if (!entry) continue;
-                    auto data = DynamicDataFactory::get_instance()
+                    if (cfg_.plan) {
+                        // Modo selectivo: solo tramas habilitadas, clave por sensor.
+                        // Las sentencias raw (sin formatter) no son convertibles en modo selectivo.
+                        if (!info.formatter.empty()) {
+                            if (auto tgt = cfg_.plan->resolve(talker, info.formatter)) {
+                                DataWriter* w = ctx.get_or_create(mapper, info, tgt->qos);
+                                if (w) {
+                                    auto* entry = ctx.get_entry(info.formatter);
+                                    if (entry) {
+                                        auto data = DynamicDataFactory::get_instance()
+                                                ->create_data(entry->dyn_type);
+                                        if (data) {
+                                            mapper.populate(data, sv, tgt->device_id);
+                                            w->write(&data);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Modo legacy: publica todo con device_id/qos globales.
+                        DataWriter* w = ctx.get_or_create(mapper, info, cfg_.qos);
+                        if (w) {
+                            const std::string ekey =
+                                    info.formatter.empty() ? "raw" : info.formatter;
+                            auto* entry = ctx.get_entry(ekey);
+                            if (entry) {
+                                auto data = DynamicDataFactory::get_instance()
                                         ->create_data(entry->dyn_type);
-                    if (!data) continue;
-                    mapper.populate(data, sv, cfg_.device_id);
-                    // write() recibe la DIRECCIÓN del _ref_type (shared_ptr), NO data.get():
-                    // DynamicPubSubType reinterpreta el void* como DynamicData::_ref_type*.
-                    w->write(&data);
+                                if (data) {
+                                    mapper.populate(data, sv, cfg_.device_id);
+                                    w->write(&data);
+                                }
+                            }
+                        }
+                    }
                 }
             } else if (r == ParseResult::ChecksumError) {
                 ++err_;
             }
         }
+        if (cfg_.publish_to_dds && cfg_.plan)
+            ctx.reconcile(cfg_.plan->active_formatters());
     }
     state_.store(State::Stopped, std::memory_order_release);
 

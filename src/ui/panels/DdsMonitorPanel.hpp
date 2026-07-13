@@ -21,7 +21,6 @@ public slots:
 
 private slots:
     void onScanClicked();
-    void onDiagClicked();
     void onReadSampleClicked();
 
 private:

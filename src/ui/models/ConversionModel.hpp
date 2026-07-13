@@ -7,16 +7,18 @@
 namespace nmea::ui {
 
 struct ConversionRow {
+    QString talker;
+    QString formatter;
     QString deviceId;
-    int     state{0};           // 0=Stopped 1=Running 2=Error
-    quint64 sentencesOk{0};
-    QString categories;         // "GPS, Heading"
+    QString topic;
+    QString qos;
+    QString ros;
 };
 
 class ConversionModel : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Col { DeviceId=0, State, Messages, Categories, ColCount };
+    enum Col { Talker=0, Formatter, DeviceId, Topic, Qos, Ros, ColCount };
 
     explicit ConversionModel(QObject* parent = nullptr);
 
@@ -25,13 +27,14 @@ public:
     QVariant data(const QModelIndex& idx, int role = Qt::DisplayRole) const override;
     QVariant headerData(int section, Qt::Orientation, int role = Qt::DisplayRole) const override;
 
-    void addOrUpdate(const ConversionRow& row);
-    void remove(const QString& deviceId);
-    const ConversionRow* findRow(const QString& deviceId) const;
+    void addRow(const ConversionRow& row);
+    void removeAt(int row);
+    void setQos(int row, const QString& qos);
+    void setRos(const QString& talker, const QString& formatter, const QString& ros);
+    const ConversionRow* at(int row) const;
 
 private:
     QVector<ConversionRow> rows_;
-    int indexFor(const QString& deviceId) const;
 };
 
 }  // namespace nmea::ui

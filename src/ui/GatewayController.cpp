@@ -2,15 +2,9 @@
 #include "ui/GatewayController.hpp"
 
 #include <QMetaObject>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
 #include <functional>
-#include <thread>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
@@ -34,6 +28,7 @@
 #include "capture/TcpSource.hpp"
 #include "capture/UdpSource.hpp"
 #include "mapper/Mapper.hpp"
+#include "ros/RosPublisher.hpp"
 
 namespace nmea::ui {
 
@@ -72,19 +67,29 @@ public:
     }
 };
 
+// Lector DDS persistente para la lectura "en vivo" de un tópico desde el Monitor.
+struct GatewayController::SampleStream {
+    eprosima::fastdds::dds::Subscriber*            sub{nullptr};
+    eprosima::fastdds::dds::DataReader*            reader{nullptr};
+    eprosima::fastdds::dds::Topic*                 topic{nullptr};
+    eprosima::fastdds::dds::DynamicType::_ref_type type;
+    QString                                        last;
+};
+
 GatewayController::GatewayController(QObject* parent)
     : QObject(parent)
     , registry_(nmea::Registry::builtin())
     , poll_timer_(new QTimer(this))
 {
+    ros_publisher_ = std::make_unique<nmea::ros::RosPublisher>();
     connect(poll_timer_, &QTimer::timeout, this, &GatewayController::pollPipelines);
     poll_timer_->start(100);  // 10 Hz
 }
 
 GatewayController::~GatewayController() {
-    stopPreview();
+    disconnectAll();
+    stopSampleStream();
     stopScan();
-    for (auto& [id, p] : pipelines_) p->stop();
 }
 
 std::unique_ptr<nmea::ISource> GatewayController::makeSource(
@@ -115,123 +120,136 @@ std::unique_ptr<nmea::ISource> GatewayController::makeSource(
     return src;
 }
 
-void GatewayController::startPreview(const QString& source, int baud,
-                                      const QString& deviceId) {
-    stopPreview();
+void GatewayController::connectInterface(const QString& source, int baud,
+                                          int domainId) {
+    if (pipelines_.count(source)) {
+        emit interfaceError(source, "La interfaz ya está conectada");
+        return;
+    }
     auto src = makeSource(source, baud);
     if (!src) {
-        emit networkDiagResult("Conexión serial/TCP", false,
-                               "No se pudo abrir " + source);
+        emit interfaceError(source, "No se pudo abrir " + source);
         return;
     }
     nmea::Pipeline::Config cfg;
-    cfg.device_id      = deviceId.toStdString();
-    cfg.source         = std::move(src);
-    cfg.registry       = &registry_;
-    cfg.domain_id      = 0;
-    cfg.publish_to_dds = false;
-    cfg.on_sentence = [this](std::string formatter, std::string category,
-                              std::vector<std::string> names,
-                              std::vector<std::string> values) {
-        QStringList qnames, qvalues;
-        for (auto& n : names)  qnames  << QString::fromStdString(n);
-        for (auto& v : values) qvalues << QString::fromStdString(v);
-        const QString fmt = QString::fromStdString(formatter);
-        const QString cat = QString::fromStdString(category);
-        QMetaObject::invokeMethod(this, [this, fmt, cat, qnames, qvalues]() {
-            auto& rt = rate_trackers_[fmt.toStdString()];
-            rt.last_count++;
-            emit sentenceDetected(fmt, cat, qnames, qvalues, rt.rate_hz);
-        }, Qt::QueuedConnection);
-    };
-    preview_pipeline_ = std::make_unique<nmea::Pipeline>(std::move(cfg));
-    preview_pipeline_->start();
-}
-
-void GatewayController::stopPreview() {
-    if (preview_pipeline_) {
-        preview_pipeline_->stop();
-        preview_pipeline_.reset();
-    }
-    rate_trackers_.clear();
-}
-
-void GatewayController::launchConversion(const QString& source, int baud,
-                                          const QString& deviceId, int domainId,
-                                          const QoSProfile& qos) {
-    stopPreview();
-    auto src = makeSource(source, baud);
-    if (!src) return;
-    nmea::Pipeline::Config cfg;
-    cfg.device_id      = deviceId.toStdString();
     cfg.source         = std::move(src);
     cfg.registry       = &registry_;
     cfg.domain_id      = domainId;
-    cfg.publish_to_dds = true;
-    // Aplica el perfil QoS elegido en la UI al DataWriter (D8).
-    cfg.qos = nmea::Pipeline::QosSettings{
-        qos.reliable, qos.transient_local, qos.deadline_ms, qos.lifespan_ms};
-    auto pipeline = std::make_unique<nmea::Pipeline>(std::move(cfg));
-    pipeline->start();
-    pipelines_[deviceId.toStdString()] = std::move(pipeline);
+    cfg.publish_to_dds = true;       // el plan decide qué se publica (arranca vacío)
+    cfg.plan           = &publish_plan_;
+    cfg.on_sentence = [this, source](std::string talker, std::string formatter,
+                              std::string category,
+                              std::vector<std::string> names,
+                              std::vector<std::string> values) {
+        // Publicación ROS (si la conversión la tiene habilitada). Thread-safe;
+        // corre en el hilo worker, igual que la publicación DDS.
+        if (ros_publisher_)
+            ros_publisher_->onSentence(talker, formatter, category, names, values);
+        QStringList qnames, qvalues;
+        for (auto& n : names)  qnames  << QString::fromStdString(n);
+        for (auto& v : values) qvalues << QString::fromStdString(v);
+        const QString tk  = QString::fromStdString(talker);
+        const QString fmt = QString::fromStdString(formatter);
+        const QString cat = QString::fromStdString(category);
+        QMetaObject::invokeMethod(this, [this, source, tk, fmt, cat, qnames, qvalues]() {
+            auto& rt = rate_trackers_[(tk + "|" + fmt).toStdString()];
+            rt.last_count++;
+            iface_rates_[source].last_count++;
+            emit sentenceDetected(source, tk, fmt, cat, qnames, qvalues, rt.rate_hz);
+        }, Qt::QueuedConnection);
+    };
+    auto pipe = std::make_unique<nmea::Pipeline>(std::move(cfg));
+    pipe->start();
+    pipelines_[source] = std::move(pipe);
+    emit interfaceConnected(source);
 }
 
-void GatewayController::stopConversion(const QString& deviceId) {
-    auto it = pipelines_.find(deviceId.toStdString());
+void GatewayController::disconnectInterface(const QString& source) {
+    auto it = pipelines_.find(source);
     if (it == pipelines_.end()) return;
     it->second->stop();
     pipelines_.erase(it);
-    emit conversionStateChanged(deviceId, 0, 0);
+    iface_rates_.erase(source);
+    emit interfaceDisconnected(source);
+}
+
+void GatewayController::disconnectAll() {
+    for (auto& [src, pipe] : pipelines_) pipe->stop();
+    pipelines_.clear();
+    rate_trackers_.clear();
+    iface_rates_.clear();
+}
+
+namespace {
+QString qosLabel(const QoSProfile& p) {
+    QString s;
+    if (!p.name.empty()) s += QString::fromStdString(p.name) + " · ";
+    s += p.reliable ? "RELIABLE" : "BEST_EFFORT";
+    s += p.transient_local ? "/TL" : "/VOL";
+    if (p.deadline_ms > 0) s += QString(" d%1").arg(p.deadline_ms);
+    if (p.lifespan_ms > 0) s += QString(" l%1").arg(p.lifespan_ms);
+    return s;
+}
+}  // namespace
+
+void GatewayController::addConversion(const QString& talker,
+                                       const QString& formatter,
+                                       const QString& deviceId,
+                                       const QoSProfile& qos) {
+    publish_plan_.add(talker.toStdString(), formatter.toStdString(),
+                      deviceId.toStdString(),
+                      nmea::Pipeline::QosSettings{qos.reliable, qos.transient_local,
+                                                  qos.deadline_ms, qos.lifespan_ms});
+    nmea::Mapper mapper(registry_);
+    const auto info = mapper.resolve((talker + formatter).toStdString());
+    emit conversionAdded(talker, formatter, deviceId,
+                         QString::fromStdString(info.topic_name), qosLabel(qos));
+}
+
+QoSProfile GatewayController::conversionQoS(const QString& talker,
+                                            const QString& formatter) const {
+    const auto t = publish_plan_.resolve(talker.toStdString(), formatter.toStdString());
+    if (!t) return {};
+    return QoSProfile{"", t->qos.reliable, t->qos.transient_local,
+                      t->qos.deadline_ms, t->qos.lifespan_ms};
+}
+
+void GatewayController::updateConversionQoS(const QString& talker,
+                                            const QString& formatter,
+                                            const QoSProfile& qos) {
+    const auto t = publish_plan_.resolve(talker.toStdString(), formatter.toStdString());
+    if (!t) return;
+    publish_plan_.add(talker.toStdString(), formatter.toStdString(), t->device_id,
+                      nmea::Pipeline::QosSettings{qos.reliable, qos.transient_local,
+                                                  qos.deadline_ms, qos.lifespan_ms});
+    emit conversionQoSChanged(talker, formatter, qosLabel(qos));
+}
+
+void GatewayController::enableRos(const QString& talker, const QString& formatter,
+                                  const nmea::ros::RosTarget& target) {
+    ros_publisher_->enable(talker.toStdString(), formatter.toStdString(), target);
+}
+
+void GatewayController::disableRos(const QString& talker, const QString& formatter) {
+    ros_publisher_->disable(talker.toStdString(), formatter.toStdString());
+}
+
+void GatewayController::removeConversion(const QString& talker,
+                                          const QString& formatter) {
+    publish_plan_.remove(talker.toStdString(), formatter.toStdString());
+    ros_publisher_->disable(talker.toStdString(), formatter.toStdString());
+    emit conversionRemoved(talker, formatter);
 }
 
 void GatewayController::pollPipelines() {
-    for (auto& [id, p] : pipelines_) {
-        const int state = static_cast<int>(p->state());
-        emit conversionStateChanged(QString::fromStdString(id),
-                                    state, p->sentences_ok());
-    }
     for (auto& [fmt, rt] : rate_trackers_) {
         rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
         rt.prev_count = rt.last_count;
     }
-}
-
-void GatewayController::runNetworkDiagnostics() {
-    {
-        int s = socket(AF_INET, SOCK_DGRAM, 0);
-        bool ok = false;
-        if (s >= 0) {
-            struct ip_mreq mreq{};
-            mreq.imr_multiaddr.s_addr = inet_addr("239.255.0.1");
-            mreq.imr_interface.s_addr = INADDR_ANY;
-            ok = (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) == 0);
-            if (ok) setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
-            ::close(s);
-        }
-        emit networkDiagResult("Multicast SPDP 239.255.0.1", ok,
-                               ok ? "Grupo multicast accesible" : "No se pudo unir al grupo multicast");
-    }
-    {
-        int s = socket(AF_INET, SOCK_DGRAM, 0);
-        bool ok = false;
-        if (s >= 0) {
-            struct sockaddr_in addr{};
-            addr.sin_family      = AF_INET;
-            addr.sin_addr.s_addr = INADDR_ANY;
-            addr.sin_port        = htons(7400);
-            int reuseaddr = 1;
-            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr));
-            ok = (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
-            ::close(s);
-        }
-        emit networkDiagResult("Puerto UDP 7400 (RTPS base)", ok,
-                               ok ? "Puerto disponible" : "Puerto bloqueado o en uso");
-    }
-    {
-        const char* env = std::getenv("FASTRTPS_DEFAULT_PROFILES_FILE");
-        const bool ok = (env != nullptr && env[0] != '\0');
-        emit networkDiagResult("FASTRTPS_DEFAULT_PROFILES_FILE", ok,
-                               ok ? QString("Apunta a: ") + env : "Variable no definida (se usan defaults)");
+    for (auto& [src, rt] : iface_rates_) {
+        rt.rate_hz = static_cast<double>(rt.last_count - rt.prev_count) * 10.0;
+        rt.prev_count = rt.last_count;
+        emit interfaceRate(src, rt.rate_hz);
     }
 }
 
@@ -300,9 +318,10 @@ static QString dynamicDataToString(
     return out;
 }
 
-QString GatewayController::readTopicSample(const QString& topicName,
-                                           const QString& typeName) {
+QString GatewayController::startSampleStream(const QString& topicName,
+                                             const QString& typeName) {
     using namespace eprosima::fastdds::dds;
+    stopSampleStream();  // garantiza un solo lector activo
     if (!monitor_participant_)
         return "Inicia un barrido en el Monitor antes de leer un sample.";
 
@@ -332,32 +351,48 @@ QString GatewayController::readTopicSample(const QString& topicName,
     // BEST_EFFORT casa con writers BEST_EFFORT y RELIABLE (ofrecido ≥ pedido).
     rq.reliability().kind = BEST_EFFORT_RELIABILITY_QOS;
     DataReader* reader = sub ? sub->create_datareader(topic, rq) : nullptr;
-
-    QString result = "Sin datos en 3 s. ¿Hay una conversión publicando "
-                     "este tópico ahora mismo?";
     if (!reader) {
-        result = "No se pudo crear el lector.";
-    } else {
-        // Sondea take_next_sample hasta ~3 s (wait_for_unread_message no es
-        // fiable aquí; el sondeo sí entrega la muestra).
-        for (int i = 0; i < 60; ++i) {
-            DynamicData::_ref_type sample =
-                    DynamicDataFactory::get_instance()->create_data(dyn_type);
-            SampleInfo info;
-            if (reader->take_next_sample(&sample, &info) == RETCODE_OK && info.valid_data) {
-                result = dynamicDataToString(dyn_type, sample);
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
+        if (sub) monitor_participant_->delete_subscriber(sub);
+        monitor_participant_->delete_topic(topic);
+        return "No se pudo crear el lector.";
     }
 
-    if (sub) {
-        if (reader) sub->delete_datareader(reader);
-        monitor_participant_->delete_subscriber(sub);
+    sample_stream_ = std::make_unique<SampleStream>();
+    sample_stream_->sub    = sub;
+    sample_stream_->reader = reader;
+    sample_stream_->topic  = topic;
+    sample_stream_->type   = dyn_type;
+    sample_stream_->last   = "Esperando datos…";
+    return {};
+}
+
+QString GatewayController::pollSampleStream() {
+    using namespace eprosima::fastdds::dds;
+    if (!sample_stream_) return "Lector cerrado.";
+    // Drena las muestras disponibles y conserva la más reciente válida, de modo
+    // que cada sondeo refleje el último dato que el sensor está enviando.
+    for (;;) {
+        DynamicData::_ref_type sample =
+                DynamicDataFactory::get_instance()->create_data(sample_stream_->type);
+        SampleInfo info;
+        if (sample_stream_->reader->take_next_sample(&sample, &info) != RETCODE_OK)
+            break;
+        if (info.valid_data)
+            sample_stream_->last = dynamicDataToString(sample_stream_->type, sample);
     }
-    monitor_participant_->delete_topic(topic);
-    return result;
+    return sample_stream_->last;
+}
+
+void GatewayController::stopSampleStream() {
+    if (!sample_stream_) return;
+    if (sample_stream_->sub) {
+        if (sample_stream_->reader)
+            sample_stream_->sub->delete_datareader(sample_stream_->reader);
+        monitor_participant_->delete_subscriber(sample_stream_->sub);
+    }
+    if (sample_stream_->topic)
+        monitor_participant_->delete_topic(sample_stream_->topic);
+    sample_stream_.reset();
 }
 
 void GatewayController::stopScan() {
