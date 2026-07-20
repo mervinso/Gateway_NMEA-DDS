@@ -6,11 +6,19 @@
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QBrush>
+#include <QDateTime>
 #include <QSet>
 
 #include "registry/Registry.hpp"
 
 namespace nmea::ui {
+
+namespace {
+// Sin sentencias durante este lapso, la trama se marca "sin datos".
+constexpr qint64 kStaleAfterMs  = 5000;
+constexpr int    kLastSeenRole  = Qt::UserRole + 4;   // msecs epoch en el nodo trama
+const QBrush     kStaleBrush(QColor(0xE5, 0xC0, 0x7B));  // ámbar
+}  // namespace
 
 DevicesPanel::DevicesPanel(const nmea::Registry* registry, QWidget* parent)
     : QWidget(parent), registry_(registry) {
@@ -40,6 +48,10 @@ DevicesPanel::DevicesPanel(const nmea::Registry* registry, QWidget* parent)
 
     connect(tree_, &QTreeWidget::itemSelectionChanged,
             this, &DevicesPanel::onTreeSelectionChanged);
+
+    stale_timer_ = new QTimer(this);
+    connect(stale_timer_, &QTimer::timeout, this, &DevicesPanel::checkStale);
+    stale_timer_->start(1000);
 }
 
 QString DevicesPanel::deviceId() const {
@@ -83,6 +95,13 @@ void DevicesPanel::onSentenceDetected(QString source, QString talker,
     QTreeWidgetItem* tk = talkerItem(talker);
     QTreeWidgetItem* tr = tramaItem(tk, source, formatter, category);
 
+    // Marca de recepción: limpia el aviso "sin datos" si lo había.
+    tr->setData(0, kLastSeenRole, QDateTime::currentMSecsSinceEpoch());
+    if (!tr->text(1).isEmpty()) {
+        tr->setText(1, QString());
+        tr->setForeground(1, QBrush());
+    }
+
     const int fieldCount = fieldNames.size();
     while (tr->childCount() < fieldCount) new QTreeWidgetItem(tr);
 
@@ -99,6 +118,19 @@ void DevicesPanel::onSentenceDetected(QString source, QString talker,
                     child->setText(2, QString::fromStdString(fd.unit));
                     break;
                 }
+        }
+    }
+}
+
+void DevicesPanel::checkStale() {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (QTreeWidgetItem* node : trama_items_) {
+        const QVariant last = node->data(0, kLastSeenRole);
+        if (!last.isValid()) continue;   // nunca llegó nada (no debería pasar)
+        const qint64 age = now - last.toLongLong();
+        if (age > kStaleAfterMs) {
+            node->setText(1, QString("⚠ sin datos (%1s)").arg(age / 1000));
+            node->setForeground(1, kStaleBrush);
         }
     }
 }

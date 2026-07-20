@@ -10,6 +10,8 @@ por cada flujo de datos.
 El origen físico desde el que entran datos NMEA: un puerto serie (`ttyUSBx` + baud) o un
 endpoint de red (`tcp://host:port`). Una fuente es exclusiva: una sola conversión la posee.
 _Avoid_: canal, entrada, interfaz.
+_Nota GUI_: el panel ① se rotula "Interfaces" por familiaridad para el operador; en prosa
+técnica y en el resto de la documentación el término sigue siendo **fuente**.
 
 **Dispositivo** (device):
 Un sensor lógico identificado de forma única por su **device_id**, ligado a una **fuente**.

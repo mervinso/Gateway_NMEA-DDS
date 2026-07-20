@@ -19,6 +19,7 @@ QVariant ConversionModel::data(const QModelIndex& idx, int role) const {
         case Topic:     return r.topic;
         case Qos:       return r.qos;
         case Ros:       return r.ros.isEmpty() ? "—" : r.ros;
+        case Estado:    return r.estado;
     }
     return {};
 }
@@ -26,12 +27,13 @@ QVariant ConversionModel::data(const QModelIndex& idx, int role) const {
 QVariant ConversionModel::headerData(int section, Qt::Orientation o, int role) const {
     if (role != Qt::DisplayRole || o != Qt::Horizontal) return {};
     switch (section) {
-        case Talker:    return "Sensor";
+        case Talker:    return "Talker";
         case Formatter: return "Trama";
         case DeviceId:  return "device_id";
         case Topic:     return "Tópico";
         case Qos:       return "QoS";
         case Ros:       return "ROS";
+        case Estado:    return "Estado";
     }
     return {};
 }
@@ -61,6 +63,18 @@ void ConversionModel::setRos(const QString& talker, const QString& formatter,
         if (rows_[i].talker == talker && rows_[i].formatter == formatter) {
             rows_[i].ros = ros;
             emit dataChanged(index(i, Ros), index(i, Ros));
+            return;
+        }
+    }
+}
+
+void ConversionModel::setEstado(const QString& talker, const QString& formatter,
+                                const QString& estado) {
+    for (int i = 0; i < rows_.size(); ++i) {
+        if (rows_[i].talker == talker && rows_[i].formatter == formatter) {
+            if (rows_[i].estado == estado) return;
+            rows_[i].estado = estado;
+            emit dataChanged(index(i, Estado), index(i, Estado));
             return;
         }
     }

@@ -104,6 +104,13 @@ void MainWindow::connectPanels() {
     connect(controller_, &GatewayController::sentenceDetected,
             devices_panel_, &DevicesPanel::onSentenceDetected);
 
+    // controller → ⑤ marca de recepción (columna Estado: recibiendo / sin datos).
+    connect(controller_, &GatewayController::sentenceDetected,
+            conversions_panel_, [this](QString, QString tk, QString fmt, QString,
+                                       QStringList, QStringList, double) {
+        conversions_panel_->onSentenceSeen(tk, fmt);
+    });
+
     // Al desconectar una interfaz, sus tramas desaparecen del panel.
     connect(controller_, &GatewayController::interfaceDisconnected,
             devices_panel_, &DevicesPanel::removeInterface);

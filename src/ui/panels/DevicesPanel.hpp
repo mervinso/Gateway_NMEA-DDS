@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
 namespace nmea { class Registry; }
 
@@ -36,6 +37,7 @@ signals:
 
 private slots:
     void onTreeSelectionChanged();
+    void checkStale();   // marca las tramas sin datos recientes
 
 private:
     QTreeWidgetItem* talkerItem(const QString& talker);
@@ -47,6 +49,7 @@ private:
     QTreeWidget* tree_;
     // Índice (source|talker|formatter) → nodo de trama.
     QMap<QString, QTreeWidgetItem*> trama_items_;
+    QTimer* stale_timer_;
     QString sel_talker_;
     QString sel_formatter_;
 };

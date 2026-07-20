@@ -117,6 +117,23 @@ target_include_directories(verify_gps_ros PRIVATE src)
 target_link_libraries(verify_gps_ros PRIVATE
     nmea_pipeline nmea_mapper nmea_registry nmea_capture fastdds nmea_ros)
 
+# Arnés headless: ensayo de Demo 3 (QoS en caliente) y Demo 5 p.1 (reconvertir + ROS).
+add_executable(rehearse_demos tools/rehearse_demos.cpp src/ui/GatewayController.cpp)
+target_include_directories(rehearse_demos PRIVATE src)
+target_link_libraries(rehearse_demos PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture Qt6::Core fastdds nmea_ros)
+
+# Arnés offscreen: indicador de recepción/sin-datos en la capa de widgets (②/⑤).
+add_executable(verify_stale_ui tools/verify_stale_ui.cpp
+    src/ui/GatewayController.cpp
+    src/ui/panels/DevicesPanel.cpp
+    src/ui/panels/ConversionsPanel.cpp
+    src/ui/models/ConversionModel.cpp)
+target_include_directories(verify_stale_ui PRIVATE src)
+target_link_libraries(verify_stale_ui PRIVATE
+    nmea_pipeline nmea_mapper nmea_registry nmea_capture
+    Qt6::Widgets Qt6::Network fastdds nmea_ros)
+
 # Validación interop: suscriptor DDS independiente (sin IDL del gateway).
 add_executable(dds_dynamic_sub tools/dds_dynamic_sub.cpp)
 target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)

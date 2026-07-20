@@ -12,12 +12,20 @@
 #include <QFormLayout>
 #include <QComboBox>
 #include <QSpinBox>
+#include <QDateTime>
 #include <optional>
 
 namespace nmea::ui {
 
 namespace {
 // Diálogo modal para editar la QoS de una conversión existente.
+// Sin sentencias durante este lapso, la conversión se marca "sin datos".
+constexpr qint64 kStaleAfterMs = 5000;
+
+QString claveConv(const QString& talker, const QString& formatter) {
+    return talker + '|' + formatter;
+}
+
 std::optional<QoSProfile> askQos(QWidget* parent, const QoSProfile& cur) {
     QDialog dlg(parent);
     dlg.setWindowTitle("Editar QoS");
@@ -71,7 +79,7 @@ ConversionsPanel::ConversionsPanel(GatewayController* ctrl, QWidget* parent)
     inner->addWidget(table_);
 
     auto* edit_btn = new QPushButton("✎ Editar QoS");
-    auto* del_btn  = new QPushButton("🗑 Eliminar tópico");
+    auto* del_btn  = new QPushButton("🗑 Eliminar conversión");
     del_btn->setObjectName("btn_stop");
     auto* btn_row = new QHBoxLayout;
     btn_row->addWidget(edit_btn);
@@ -95,11 +103,35 @@ ConversionsPanel::ConversionsPanel(GatewayController* ctrl, QWidget* parent)
         if (auto q = askQos(this, cur))
             ctrl_->updateConversionQoS(talker, formatter, *q);  // dispara conversionQoSChanged
     });
+
+    stale_timer_ = new QTimer(this);
+    connect(stale_timer_, &QTimer::timeout, this, &ConversionsPanel::refreshEstados);
+    stale_timer_->start(1000);
 }
 
 void ConversionsPanel::onConversionAdded(QString talker, QString formatter,
                                          QString deviceId, QString topic, QString qos) {
-    model_->addRow({talker, formatter, deviceId, topic, qos});
+    model_->addRow({talker, formatter, deviceId, topic, qos, QString{},
+                    QStringLiteral("esperando…")});
+}
+
+void ConversionsPanel::onSentenceSeen(QString talker, QString formatter) {
+    last_seen_[claveConv(talker, formatter)] = QDateTime::currentMSecsSinceEpoch();
+}
+
+void ConversionsPanel::refreshEstados() {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (int i = 0; i < model_->rowCount(); ++i) {
+        const ConversionRow* r = model_->at(i);
+        if (!r) continue;
+        const auto it = last_seen_.constFind(claveConv(r->talker, r->formatter));
+        if (it == last_seen_.constEnd()) continue;  // aún sin datos: "esperando…"
+        const qint64 age = now - it.value();
+        model_->setEstado(r->talker, r->formatter,
+                          age > kStaleAfterMs
+                              ? QString("⚠ sin datos (%1s)").arg(age / 1000)
+                              : QStringLiteral("● recibiendo"));
+    }
 }
 
 void ConversionsPanel::onConversionQoSChanged(QString talker, QString formatter,
@@ -125,6 +157,7 @@ void ConversionsPanel::onConversionRemoved(QString talker, QString formatter) {
             break;
         }
     }
+    last_seen_.remove(claveConv(talker, formatter));
     emit deleteRequested(talker, formatter);  // MainWindow → markAvailable en ②
 }
 
