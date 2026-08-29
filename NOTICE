@@ -1,0 +1,38 @@
+Gateway NMEA 0183 -> DDS
+Copyright 2026 Mervin Jesús Sosa Borrero
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License in the LICENSE file distributed with this work, or at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+---------------------------------------------------------------------------
+
+Este software se desarrolla como el artefacto de la tesis de maestría
+"Diseño e implementación de un middleware adaptador basado en DDS para la
+integración interoperable de sensores legacy bajo IEC 61162-1 / NMEA 0183",
+Maestría en Ingeniería de Sistemas de Cómputo, Universidad Tecnológica de
+Bolívar, Cartagena, Colombia.
+
+---------------------------------------------------------------------------
+
+Dependencias de terceros, con sus licencias propias (no cubiertas por la
+licencia de este trabajo):
+
+  eProsima Fast DDS      Apache-2.0
+  eProsima Fast CDR      Apache-2.0
+  Qt 6                   LGPL-3.0 / comercial  (solo el componente de interfaz;
+                         el núcleo se construye sin Qt con -DGATEWAY_BUILD_UI=OFF)
+  ROS 2 (rclcpp,         Apache-2.0            (opcional; -DGATEWAY_ROS_BRIDGE=OFF)
+  sensor_msgs)
+  GoogleTest             BSD-3-Clause          (solo pruebas)
+
+El enlace con Qt 6 bajo LGPL-3.0 impone condiciones sobre la redistribución
+del ejecutable de interfaz. El núcleo, las bibliotecas estáticas y los arneses
+headless no dependen de Qt y no quedan afectados.
