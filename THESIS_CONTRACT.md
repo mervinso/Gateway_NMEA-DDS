@@ -93,7 +93,7 @@ git add -A && git commit && git push
 comprobar que la sección 1 de este archivo sigue diciendo lo correcto.
 
 **Regla de propiedad:** la tesis no edita código del gateway; el gateway no edita `thesis/`.
-Dos instancias de Claude Code no deben tocar el mismo archivo. Si algo necesita cambiar del
+Dos agentes no deben tocar el mismo archivo, sea cual sea la herramienta LLM que corra cada uno. Si algo necesita cambiar del
 otro lado, se anota, no se edita a distancia.
 
 **Advertencia — hay un tercer clon.** La máquina Windows tiene una copia local de
@@ -129,7 +129,7 @@ En orden. Los tres primeros no dependen de que la tesis decida nada más.
       traiga la distro de ROS" y no está registrado. Bloquea todo lo demás.
 - [ ] **2a** miembros opcionales · **2b** sacar dos costos de la región medida ·
       **A5** brazo estático · **A4** instrumentación · **4b** emisor de `manifest.json`.
-- [ ] **Decidir la topología de participantes** (§ correspondiente en `CLAUDE.md`).
+- [ ] **Decidir la topología de participantes** (§ correspondiente en `AGENTS.md`).
       Es del autor; si es deliberada, va como ADR.
 - [ ] **Compuerta 1** — equivalencia CDR entre brazo estático y dinámico.
 - [ ] **Compuerta 2** — piso de ruido de la instrumentación.
