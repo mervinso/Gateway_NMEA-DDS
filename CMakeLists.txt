@@ -204,6 +204,12 @@ target_link_libraries(verify_live PRIVATE
 add_executable(dds_dynamic_sub tools/dds_dynamic_sub.cpp)
 target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)
 
+# Microbenchmark de la Tarea 4 (RQ3): CPU estacionario de P participantes
+# ociosos, para ajustar d en D = d*P(P-1)/2. Barrido: tools/participant_cost_sweep.py.
+add_executable(participant_cost_bench tools/participant_cost_bench.cpp)
+target_link_libraries(participant_cost_bench PRIVATE fastdds)
+target_compile_options(participant_cost_bench PRIVATE -Wall -Wextra)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Interfaz de escritorio y arneses que instancian GatewayController (Qt + ROS).
 # ─────────────────────────────────────────────────────────────────────────────
