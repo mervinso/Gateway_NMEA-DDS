@@ -222,6 +222,13 @@ if(GATEWAY_INSTRUMENT)
     target_compile_options(instrument_selftest PRIVATE -Wall -Wextra)
 endif()
 
+# Emite el IDL del brazo generado DESDE el registro, para que los dos brazos no
+# puedan divergir. Se construye siempre: no depende de la instrumentacion.
+add_executable(idl_from_registry tools/idl_from_registry.cpp)
+target_include_directories(idl_from_registry PRIVATE src)
+target_link_libraries(idl_from_registry PRIVATE nmea_registry)
+target_compile_options(idl_from_registry PRIVATE -Wall -Wextra)
+
 add_executable(participant_cost_bench tools/participant_cost_bench.cpp)
 target_link_libraries(participant_cost_bench PRIVATE fastdds)
 target_compile_options(participant_cost_bench PRIVATE -Wall -Wextra)

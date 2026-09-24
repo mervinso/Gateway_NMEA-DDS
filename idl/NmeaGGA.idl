@@ -10,7 +10,7 @@
 // DDS 3.6.2 no honra is_optional en DynamicData y el brazo dinámico no podría
 // igualar a uno generado que sí codificara la ausencia (tesis §8.5.3).
 
-struct NmeaDBT {
+struct NmeaGGA {
     // Cabecera. El orden importa: es parte del CDR, y debe coincidir
     // con add_common_header() del Mapper.
     @key string device_id;
@@ -19,10 +19,18 @@ struct NmeaDBT {
     unsigned long field_presence;
 
     // Campos de sensor, en el orden del registro.
-    double depth_feet;
-    char feet_unit;
-    double depth_meters;
-    char meters_unit;
-    double depth_fathoms;
-    char fathoms_unit;
+    double utc_time;
+    double latitude;
+    char ns_indicator;
+    double longitude;
+    char ew_indicator;
+    unsigned long fix_quality;
+    unsigned long num_satellites;
+    double hdop;
+    double altitude;
+    char altitude_unit;
+    double geoid_separation;
+    char geoid_unit;
+    double dgps_age;
+    unsigned long dgps_station_id;
 };
