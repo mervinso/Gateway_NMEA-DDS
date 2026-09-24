@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <iostream>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -198,7 +199,13 @@ int main(int argc, char** argv) {
     // ── Asentamiento ────────────────────────────────────────────────────────
     std::this_thread::sleep_for(std::chrono::duration<double>(a.settle_s));
     const std::size_t warm_up_samples = probe.size();
-    probe.dump_csv(a.out + "/warmup.csv");   // archivadas, no descartadas
+    if (!probe.dump_csv(a.out + "/warmup.csv")) {   // archivadas, no descartadas
+        std::cerr << "measurement_run: no se pudo escribir warmup.csv (disco lleno?)\n";
+        stop_gen.store(true);
+        gen.join();           // sin esto el destructor de un hilo joinable aborta
+        pipe.stop();
+        return 3;
+    }
 
     // El orden de estas dos lineas fija el SIGNO del error de frontera, y el
     // signo importa. Una sentencia enviada justo antes de abrir y publicada
@@ -230,7 +237,14 @@ int main(int argc, char** argv) {
     stop_gen.store(true);
     gen.join();
 
-    probe.dump_csv(a.out + "/latencies.csv");
+    // Ruidoso a proposito: un CSV a medias y uno correcto son indistinguibles
+    // aguas abajo, porque el checksum de un archivo truncado cuadra igual.
+    if (!probe.dump_csv(a.out + "/latencies.csv")) {
+        std::cerr << "measurement_run: no se pudo escribir latencies.csv con "
+                  << measured << " muestras (disco lleno?)\n";
+        pipe.stop();          // el generador ya se unio mas arriba
+        return 4;
+    }
     const auto transports = pipe.effective_transports();
     pipe.stop();
 
