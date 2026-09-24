@@ -11,3 +11,6 @@
 # Build paralelo con GATEWAY_INSTRUMENT=ON, para comparar contra el build por
 # defecto. No es un artefacto: se regenera con cmake -B build-inst.
 build-inst/
+
+# Build paralelo con GATEWAY_STATIC_ARM=ON. Se regenera con cmake.
+build-static/

@@ -211,6 +211,68 @@ target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)
 # Por defecto OFF: el binario medido debe ser el binario publicado salvo este
 # flag. Con OFF, PublishProbe es una clase vacía y el compilador la elimina.
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Brazo de tipado estático (obligación 3 del Cap. 8). Por defecto OFF: necesita
+# fastddsgen, que no toda máquina de desarrollo tiene.
+#
+# El código se genera en el build y no se committea, para que no pueda quedar
+# viejo. Lo que sí está en el repo es el IDL, porque es la declaración que un
+# revisor lee en un diff — y `idl_from_registry --check` corre en cada build
+# para que ese IDL no pueda desviarse del registro.
+# ─────────────────────────────────────────────────────────────────────────────
+option(GATEWAY_STATIC_ARM "Construir el brazo de tipado estático (RQ1)" OFF)
+
+# La comprobación de frescura corre siempre, no solo con el brazo activo: el
+# IDL puede quedar desfasado aunque nadie lo esté compilando hoy.
+add_custom_target(check_idl ALL
+    COMMAND idl_from_registry --check "${CMAKE_CURRENT_SOURCE_DIR}/idl"
+    DEPENDS idl_from_registry
+    COMMENT "Comprobando que el IDL sigue coincidiendo con el registro"
+    VERBATIM)
+
+if(GATEWAY_STATIC_ARM)
+    find_program(FASTDDSGEN_EXECUTABLE fastddsgen)
+    if(NOT FASTDDSGEN_EXECUTABLE)
+        message(FATAL_ERROR
+            "GATEWAY_STATIC_ARM=ON pero no se encontro fastddsgen. "
+            "Instalar con: sudo apt install fastddsgen")
+    endif()
+
+    set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${GEN_DIR}")
+    set(STATIC_FORMATTERS ROT RSA DBT VHW GGA)
+
+    set(GEN_SOURCES "")
+    foreach(f ${STATIC_FORMATTERS})
+        set(_idl "${CMAKE_CURRENT_SOURCE_DIR}/idl/Nmea${f}.idl")
+        set(_out "${GEN_DIR}/Nmea${f}PubSubTypes.cxx"
+                 "${GEN_DIR}/Nmea${f}TypeObjectSupport.cxx")
+        add_custom_command(OUTPUT ${_out}
+            COMMAND "${FASTDDSGEN_EXECUTABLE}" -replace -d "${GEN_DIR}" "${_idl}"
+            DEPENDS "${_idl}"
+            COMMENT "fastddsgen Nmea${f}.idl"
+            VERBATIM)
+        list(APPEND GEN_SOURCES ${_out})
+    endforeach()
+
+    add_library(nmea_static_arm STATIC ${GEN_SOURCES})
+    target_include_directories(nmea_static_arm PUBLIC
+        "${GEN_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/idl" src)
+    target_link_libraries(nmea_static_arm PUBLIC fastdds fastcdr)
+    add_dependencies(nmea_static_arm check_idl)
+
+    target_compile_definitions(nmea_pipeline PUBLIC GATEWAY_STATIC_ARM)
+    target_link_libraries(nmea_pipeline PUBLIC nmea_static_arm)
+    add_executable(arm_selector_test tools/arm_selector_test.cpp)
+    target_include_directories(arm_selector_test PRIVATE src)
+    target_link_libraries(arm_selector_test PRIVATE
+        nmea_pipeline nmea_mapper nmea_registry nmea_capture nmea_parser
+        nmea_static_arm fastdds)
+    target_compile_options(arm_selector_test PRIVATE -Wall -Wextra)
+
+    message(STATUS "Brazo de tipado estatico: ACTIVADO (${FASTDDSGEN_EXECUTABLE})")
+endif()
+
 option(GATEWAY_INSTRUMENT "Instrumentar la ruta de publicación para RQ1" OFF)
 if(GATEWAY_INSTRUMENT)
     target_compile_definitions(nmea_pipeline PUBLIC GATEWAY_INSTRUMENT)

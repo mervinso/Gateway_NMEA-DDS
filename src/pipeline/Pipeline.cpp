@@ -22,6 +22,9 @@
 #include "parser/Parser.hpp"
 #include "pipeline/PublishPlan.hpp"
 #include "publish/DynamicTypeBackend.hpp"
+#ifdef GATEWAY_STATIC_ARM
+#include "publish/StaticTypeBackend.hpp"
+#endif
 
 namespace nmea {
 
@@ -193,10 +196,24 @@ void Pipeline::worker_loop() {
     Mapper mapper(*cfg_.registry);
     Parser parser;
 
-    // El seam de RQ1. Hoy solo existe el brazo dinámico; el generado se enchufa
-    // aquí y en ningún otro sitio.
+    // El seam de RQ1: el único sitio donde los dos brazos se distinguen.
     DynamicTypeBackend dynamic_backend(mapper);
+#ifdef GATEWAY_STATIC_ARM
+    StaticTypeBackend static_backend;
+    ITypeBackend& backend = (cfg_.typing == Typing::Static)
+            ? static_cast<ITypeBackend&>(static_backend)
+            : static_cast<ITypeBackend&>(dynamic_backend);
+#else
+    if (cfg_.typing == Typing::Static) {
+        // Silenciarlo produciria una corrida entera etiquetada como el brazo
+        // equivocado, que es peor que no correr.
+        error_msg_ = "se pidio el brazo estatico pero el binario se construyo "
+                     "sin -DGATEWAY_STATIC_ARM=ON";
+        state_.store(State::Error, std::memory_order_release);
+        return;
+    }
     ITypeBackend& backend = dynamic_backend;
+#endif
 
     // Última allowlist reconciliada. Vacía al arrancar, así que la primera
     // iteración con un plan no vacío reconcilia y las siguientes no.

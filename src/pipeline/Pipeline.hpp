@@ -33,7 +33,16 @@ public:
         int  lifespan_ms{0};
     };
 
+    // El factor `typing` del experimento de RQ1. El brazo generado solo existe
+    // si se construyó con -DGATEWAY_STATIC_ARM=ON; pedirlo sin eso es un error
+    // de configuración y el Pipeline lo dice en vez de caer al otro brazo en
+    // silencio, que produciría una corrida entera etiquetada como el brazo
+    // equivocado.
+    enum class Typing { Dynamic, Static };
+
     struct Config {
+        Typing typing{Typing::Dynamic};
+
         std::string              device_id;    // @key DDS (D3)
         std::unique_ptr<ISource> source;       // propiedad exclusiva (D9)
         const Registry*          registry;     // no owned, debe sobrevivir al pipeline
