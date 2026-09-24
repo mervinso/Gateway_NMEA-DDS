@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 #include "mapper/Mapper.hpp"
 #include "parser/Parser.hpp"
 #include "registry/Registry.hpp"
@@ -135,18 +137,28 @@ TEST(Mapper, TypeForSameFormatterReturnsCachedType) {
 }
 
 // --------------------------------------------------------------------------
-// §8.5.3 exige que un campo vacio quede AUSENTE y no en cero. El tipo lo
-// declara —los campos de sensor llevan is_optional— pero Fast DDS 3.6.2 no lo
-// honra en el dato: un miembro opcional de un DynamicData se codifica siempre,
-// lo hayan puesto, no tocado o limpiado con clear_value(). Verificado byte a
-// byte con XCDR2 en las tres extensibilidades: los payloads son identicos.
+// §8.5.3: un campo vacio queda AUSENTE, no en cero. IEC 61162-1 permite
+// transmitir un campo vacio cuando el dato no esta disponible, y una
+// profundidad no disponible no es una profundidad de cero metros.
 //
-// Este test fija esa limitacion en vez de fingir que la regla esta implementada.
-// Si una version futura de Fast DDS empieza a honrar la opcionalidad, este test
-// falla y alguien se entera, que es justo lo que debe pasar: de ello depende la
-// compuerta de equivalencia CDR entre el brazo dinamico y el generado.
+// La presencia va en `field_presence`, un cuarto miembro de cabecera, y no en
+// miembros opcionales. Razon medida, no de gusto: Fast DDS 3.6.2 no honra
+// is_optional en DynamicData -- un miembro opcional se codifica siempre, este
+// puesto, sin tocar o limpiado con clear_value(), verificado byte a byte con
+// XCDR2 en FINAL, APPENDABLE y MUTABLE. El brazo generado SI codificaria la
+// ausencia con @optional, asi que emparejar los dos por esa via rompe la
+// compuerta de equivalencia CDR. Una mascara la expresan los dos brazos igual.
 // --------------------------------------------------------------------------
-TEST(Mapper, SensorFieldsAreDeclaredOptionalInTheType) {
+namespace {
+std::uint32_t presence_of(const DynamicData::_ref_type& data) {
+    std::uint32_t m = 0;
+    EXPECT_EQ(data->get_uint32_value(m, data->get_member_id_by_name("field_presence")),
+              RETCODE_OK);
+    return m;
+}
+}  // namespace
+
+TEST(Mapper, HeaderCarriesPresenceAndSensorFieldsAreNotOptional) {
     const Registry reg = Registry::builtin();
     const Mapper mapper(reg);
     const DynamicType::_ref_type type = mapper.type_for("GGA");
@@ -155,50 +167,85 @@ TEST(Mapper, SensorFieldsAreDeclaredOptionalInTheType) {
     DynamicTypeMembersByName members;
     ASSERT_EQ(type->get_all_members_by_name(members), RETCODE_OK);
 
-    auto is_optional = [&](const char* name) {
-        auto it = members.find(name);
-        EXPECT_NE(it, members.end()) << name;
-        if (it == members.end()) return false;
+    for (const char* h : {"device_id", "talker", "recv_timestamp", "field_presence"})
+        EXPECT_NE(members.find(h), members.end()) << "falta el miembro de cabecera " << h;
+
+    // Ningun miembro se declara opcional: la mascara sustituye ese mecanismo, y
+    // llevar los dos haria que el TypeObject del brazo dinamico difiriera del
+    // generado justo en lo que la compuerta de conformidad compara.
+    for (auto& [name, member] : members) {
         MemberDescriptor::_ref_type d = traits<MemberDescriptor>::make_shared();
-        it->second->get_descriptor(d);
-        return d->is_optional();
-    };
-
-    // Los tres miembros de cabecera NO son opcionales: una muestra sin identidad
-    // de dispositivo o sin marca de recepcion no tiene con que ser clavada.
-    EXPECT_FALSE(is_optional("device_id"));
-    EXPECT_FALSE(is_optional("talker"));
-    EXPECT_FALSE(is_optional("recv_timestamp"));
-
-    // Todo campo de sensor si lo es.
-    EXPECT_TRUE(is_optional("altitude"));
-    EXPECT_TRUE(is_optional("dgps_age"));
+        member->get_descriptor(d);
+        EXPECT_FALSE(d->is_optional()) << name << " no deberia declararse opcional";
+    }
 }
 
-TEST(Mapper, EmptyFieldReadsAsZeroBecauseDynamicDataCannotExpressAbsence) {
+TEST(Mapper, PresenceMaskDistinguishesEmptyFromZero) {
     const Registry reg = Registry::builtin();
     const Mapper mapper(reg);
+    const SentenceDef* def = reg.lookup("GGA");
+    ASSERT_NE(def, nullptr);
 
-    // GGA con dgps_age vacio (campo 12). populate() ya NO lo convierte: lo deja
-    // sin poner. Aun asi se lee 0.0, porque create_data() materializa el default
-    // de todo miembro y la opcionalidad no llega al dato.
+    auto index_of = [&](const char* name) -> int {
+        for (std::size_t i = 0; i < def->fields.size(); ++i)
+            if (def->fields[i].name == name) return static_cast<int>(i);
+        return -1;
+    };
+    const int i_alt = index_of("altitude");
+    const int i_age = index_of("dgps_age");
+    ASSERT_GE(i_alt, 0);
+    ASSERT_GE(i_age, 0);
+
+    // dgps_age llega vacio; altitude llega con 545.4.
     Parsed p("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
     ASSERT_EQ(p.result, ParseResult::Complete);
+    DynamicData::_ref_type d = mapper.map(p.view(), "gps");
+    ASSERT_NE(d, nullptr);
 
-    DynamicData::_ref_type data = mapper.map(p.view(), "gps");
-    ASSERT_NE(data, nullptr);
+    const std::uint32_t mask = presence_of(d);
+    EXPECT_TRUE(mask & (1u << i_alt)) << "altitude llego con contenido";
+    EXPECT_FALSE(mask & (1u << i_age)) << "dgps_age llego vacio: su bit debe estar en cero";
 
-    double dgps_age = 99.0;
-    const MemberId mid = data->get_member_id_by_name("dgps_age");
-    ASSERT_NE(mid, MEMBER_ID_INVALID);
-    EXPECT_EQ(data->get_float64_value(dgps_age, mid), RETCODE_OK);
+    // Y el valor sigue leyendose como 0.0 -- que es exactamente por lo que hace
+    // falta la mascara. Sin ella, cero y ausente son indistinguibles.
+    double age = 99.0;
+    EXPECT_EQ(d->get_float64_value(age, d->get_member_id_by_name("dgps_age")), RETCODE_OK);
+    EXPECT_DOUBLE_EQ(age, 0.0);
+}
 
-    // Si esto alguna vez deja de ser 0.0 —o el retcode deja de ser OK— es que la
-    // opcionalidad empezo a honrarse, y entonces la regla de §8.5.3 SI esta
-    // implementada en el brazo dinamico y hay que revisar la compuerta CDR.
-    EXPECT_DOUBLE_EQ(dgps_age, 0.0)
-            << "Fast DDS empezo a honrar is_optional en DynamicData: revisar §8.5.3, "
-               "la compuerta de equivalencia CDR y el brazo estatico";
+TEST(Mapper, TruncatedSentenceLeavesTrailingBitsClear) {
+    const Registry reg = Registry::builtin();
+    const Mapper mapper(reg);
+    const SentenceDef* def = reg.lookup("GGA");
+    ASSERT_NE(def, nullptr);
+
+    // GGA con solo tres campos: los demas no llegaron.
+    Parsed p("$GPGGA,123519,4807.038,N*27\r\n");
+    ASSERT_EQ(p.result, ParseResult::Complete);
+    DynamicData::_ref_type d = mapper.map(p.view(), "gps");
+    ASSERT_NE(d, nullptr);
+
+    const std::uint32_t mask = presence_of(d);
+    for (std::size_t i = 3; i < def->fields.size(); ++i)
+        EXPECT_FALSE(mask & (1u << i))
+                << "el campo " << def->fields[i].name << " no llego: su bit debe estar en cero";
+}
+
+TEST(Mapper, EveryRegistryDefinitionFitsThePresenceMask) {
+    // La mascara es de 32 bits. Si alguna definicion futura declarara mas de 32
+    // campos, los bits altos se perderian en silencio. Se comprueba en vez de
+    // contarse a mano: el conteo de formatters de este registro ya se corrigio
+    // dos veces por hacerlo a ojo.
+    const Registry reg = Registry::builtin();
+    std::size_t worst = 0;
+    std::string who;
+    for (const char* f : {"GGA", "RMC", "GLL", "VTG", "ZDA", "GSA", "HDT", "MWV",
+                          "MWD", "DBT", "DPT", "VHW", "VBW", "ROT", "RSA", "VNYMR"}) {
+        const SentenceDef* d = reg.lookup(f);
+        if (d && d->fields.size() > worst) { worst = d->fields.size(); who = f; }
+    }
+    EXPECT_LE(worst, 32u) << "el formatter mas ancho es " << who << " con " << worst
+                          << " campos y la mascara solo tiene 32 bits";
 }
 
 TEST(Mapper, ResolveExposesTalker) {

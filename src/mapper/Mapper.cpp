@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "mapper/Mapper.hpp"
 
 #include <charconv>
@@ -120,6 +121,23 @@ void add_common_header(DynamicTypeBuilder::_ref_type& builder) {
     add_member(builder, "device_id",       str,                   /*is_key=*/true);
     add_member(builder, "talker",          str);
     add_member(builder, "recv_timestamp",  primitive(TK_INT64));
+    // Presencia por campo. El bit i vale 1 si el campo de sensor i llegó con
+    // contenido, y 0 si llegó vacío o no llegó. IEC 61162-1 permite transmitir
+    // un campo vacío cuando el dato no está disponible, y una profundidad no
+    // disponible no es una profundidad de cero metros (§8.5.3).
+    //
+    // Por qué una máscara y no miembros opcionales: Fast DDS 3.6.2 no honra
+    // `is_optional` en `DynamicData` — un miembro opcional se codifica siempre,
+    // esté puesto, sin tocar o limpiado con clear_value(), verificado byte a
+    // byte con XCDR2 en las tres extensibilidades. El brazo generado SÍ
+    // codificaría la ausencia con @optional, así que emparejar los dos por esa
+    // vía rompería la compuerta de equivalencia CDR. Una máscara la expresan
+    // los dos brazos igual.
+    //
+    // Cuesta un setter por sentencia, no por campo, así que el costo por campo
+    // que H4 mide no cambia; lo que cambia es el intercepto, y por eso las
+    // búsquedas por sentencia pasan de campos+3 a campos+4.
+    add_member(builder, "field_presence",  primitive(TK_UINT32));
 }
 
 }  // namespace
@@ -159,14 +177,17 @@ DynamicType::_ref_type Mapper::build_type(const SentenceDef& def) const {
 
     add_common_header(builder);
 
-    // Los tres miembros de cabecera que añade add_common_header() NO son
-    // opcionales: una muestra sin identidad de dispositivo o sin marca de
-    // recepción no tiene con qué ser clavada ni ordenada (§8.5.3).
+    // Los campos de sensor NO se declaran opcionales. La presencia la lleva
+    // `field_presence` en la cabecera (§8.5.3), y declarar además la
+    // opcionalidad sería llevar dos mecanismos para lo mismo — uno de los
+    // cuales Fast DDS 3.6.2 no honra en el dato, y que haría que el TypeObject
+    // del brazo dinámico difiriera del generado justo en lo que la compuerta de
+    // conformidad compara.
     for (const auto& field : def.fields) {
         const DynamicType::_ref_type type = field.type == FieldType::String
                 ? string_type()
                 : primitive(to_kind(field.type));
-        add_member(builder, field.name, type, /*is_key=*/false, /*is_optional=*/true);
+        add_member(builder, field.name, type);
     }
     return builder->build();
 }
@@ -231,6 +252,9 @@ void Mapper::populate(DynamicData::_ref_type& data,
             payload += view.fields[i];
         }
         data->set_string_value(data->get_member_id_by_name("payload"), payload);
+        // RawSentence no declara campos de sensor, asi que su mascara es 0. Se
+        // pone explicitamente en vez de confiar en el valor por defecto.
+        data->set_uint32_value(data->get_member_id_by_name("field_presence"), 0u);
         return;
     }
 
@@ -242,12 +266,18 @@ void Mapper::populate(DynamicData::_ref_type& data,
     // comportamiento correcto: un campo que no llegó es exactamente un campo
     // que no está presente.
     const std::size_t n = std::min(view.fields.size(), def->fields.size());
+    std::uint32_t presence = 0;
     for (std::size_t i = 0; i < n; ++i) {
         const auto& fd  = def->fields[i];
         const auto  sv  = view.fields[i];
-        if (sv.empty()) continue;   // ausente se queda ausente, no pasa a cero
+        // Un campo vacío no se convierte: se deja en su valor por defecto y su
+        // bit queda en cero. Un campo que no llegó tampoco entra en este bucle,
+        // y su bit tambien queda en cero — bajo esta regla el truncamiento deja
+        // de ser un segundo defecto y pasa a ser el mismo caso.
+        if (sv.empty()) continue;
         const MemberId mid = data->get_member_id_by_name(fd.name);
         if (mid == MEMBER_ID_INVALID) continue;
+        if (i < 32) presence |= (1u << i);
         switch (fd.type) {
             case FieldType::Float64: data->set_float64_value(mid, parse_f64(sv)); break;
             case FieldType::Int32:   data->set_int32_value(mid,   parse_i32(sv)); break;
@@ -256,6 +286,7 @@ void Mapper::populate(DynamicData::_ref_type& data,
             case FieldType::String:  data->set_string_value(mid,  std::string(sv)); break;
         }
     }
+    data->set_uint32_value(data->get_member_id_by_name("field_presence"), presence);
 }
 
 DynamicData::_ref_type Mapper::map(const SentenceView& view,
