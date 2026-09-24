@@ -42,6 +42,20 @@ namespace {
 
 // Tipos IDL correspondientes a los del registro. Si se añade un FieldType y no
 // se añade aquí, el switch sin default hace que el compilador lo diga.
+// Conversor de FieldParse.hpp que corresponde a cada tipo del registro. Los dos
+// brazos convierten con las MISMAS funciones: dos implementaciones de esto es
+// como acaban produciendo CDR distinto para la misma sentencia.
+const char* parse_call(FieldType t) {
+    switch (t) {
+        case FieldType::Float64: return "parse_f64";
+        case FieldType::Int32:   return "parse_i32";
+        case FieldType::UInt32:  return "parse_u32";
+        case FieldType::Char:    return "parse_char";
+        case FieldType::String:  return "std::string";
+    }
+    return "parse_f64";
+}
+
 const char* idl_type(FieldType t) {
     switch (t) {
         case FieldType::Float64: return "double";
@@ -88,6 +102,68 @@ std::string emit(const Registry& reg, const std::string& f, std::string& error) 
     for (const auto& fd : def->fields)
         o += std::string("    ") + idl_type(fd.type) + " " + fd.name + ";\n";
     o += "};\n";
+    return o;
+}
+
+constexpr const char* POP_HEADER = R"(// GENERADO POR tools/idl_from_registry -- NO EDITAR A MANO.
+//
+// Poblado del brazo generado. Una funcion por tipo, emitida desde el registro
+// igual que el IDL, para que el brazo estatico y el dinamico no puedan
+// divergir. Escribir estas a mano seria escribir cinco copias de una regla que
+// ya existe en un sitio.
+//
+// La regla es la de §8.5.3: un campo recibido con contenido se convierte y pone
+// su bit en field_presence; uno recibido vacio y uno que no llego se dejan en su
+// valor por defecto con el bit en cero. Identica a la de Mapper::populate().
+//
+// Las conversiones salen de mapper/FieldParse.hpp, las mismas que usa el brazo
+// dinamico.
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+
+#include "mapper/FieldParse.hpp"
+#include "parser/Parser.hpp"
+
+)";
+
+// Emite la funcion de poblado de un formatter.
+std::string emit_populate(const SentenceDef& def, const std::string& f) {
+    const std::string name = "Nmea" + f;
+    std::string o;
+    o += "inline void populate_static(" + name + "& s,\n";
+    o += "                            const SentenceView& v,\n";
+    o += "                            std::string_view device_id,\n";
+    o += "                            std::string_view talker,\n";
+    o += "                            std::int64_t recv_ns) {\n";
+    o += "    s.device_id(std::string(device_id));\n";
+    o += "    s.talker(std::string(talker));\n";
+    o += "    s.recv_timestamp(recv_ns);\n";
+    o += "    std::uint32_t presence = 0;\n";
+    for (std::size_t i = 0; i < def.fields.size(); ++i) {
+        const auto& fd = def.fields[i];
+        const std::string idx = std::to_string(i);
+        o += "    if (v.fields.size() > " + idx + " && !v.fields[" + idx + "].empty()) {\n";
+        o += "        s." + fd.name + "(" + parse_call(fd.type) + "(v.fields[" + idx + "]));\n";
+        o += "        presence |= (1u << " + idx + ");\n";
+        o += "    }\n";
+    }
+    o += "    s.field_presence(presence);\n";
+    o += "}\n";
+    return o;
+}
+
+std::string emit_populate_file(const Registry& reg, const std::vector<std::string>& wanted) {
+    std::string o = POP_HEADER;
+    for (const std::string& f : wanted) o += "#include \"Nmea" + f + ".hpp\"\n";
+    o += "\nnamespace nmea {\n\n";
+    for (const std::string& f : wanted) {
+        o += emit_populate(*reg.lookup(f), f) + "\n";
+    }
+    o += "}  // namespace nmea\n";
     return o;
 }
 
@@ -148,6 +224,29 @@ int main(int argc, char** argv) {
         if (!o) { std::fprintf(stderr, "fallo al escribir %s\n", path.c_str()); return 1; }
         std::printf("  %-14s %2zu campos -> %s\n", f.c_str(),
                     reg.lookup(f)->fields.size(), path.c_str());
+    }
+
+    // El fichero de poblado, emitido de la misma fuente que el IDL.
+    {
+        const std::string text = emit_populate_file(reg, wanted);
+        const std::filesystem::path path = dir / "NmeaStaticPopulate.hpp";
+        if (check) {
+            const std::string on_disk = read_file(path);
+            if (on_disk.empty()) {
+                std::printf("  FALTA      %s\n", path.c_str()); ++stale;
+            } else if (on_disk != text) {
+                std::printf("  DESFASADO  %s -- el registro cambio y el poblado no\n",
+                            path.c_str()); ++stale;
+            } else {
+                std::printf("  ok         %s\n", path.c_str());
+            }
+        } else {
+            std::ofstream o(path, std::ios::binary);
+            if (!o) { std::fprintf(stderr, "no se pudo escribir %s\n", path.c_str()); return 1; }
+            o << text;
+            std::printf("  %-14s %2zu funciones -> %s\n", "poblado", wanted.size(),
+                        path.c_str());
+        }
     }
 
     if (check) {

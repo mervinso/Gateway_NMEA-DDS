@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "mapper/Mapper.hpp"
+#include "mapper/FieldParse.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -64,34 +65,6 @@ TypeKind to_kind(FieldType ft) {
     return TK_FLOAT64;
 }
 
-// Parseo sin locale ni excepciones para campos de wire.
-//
-// Desde §8.5.3 populate() nunca les pasa una cadena vacía: un campo vacío se
-// deja sin poner en vez de convertirse. Las guardas de abajo se conservan
-// porque estos helpers son alcanzables desde otros llamadores, pero devolver
-// cero para una cadena vacía ya no es el camino por el que pasa una sentencia
-// con un campo nulo.
-double parse_f64(std::string_view sv) noexcept {
-    if (sv.empty()) return 0.0;
-    double v = 0.0;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-int32_t parse_i32(std::string_view sv) noexcept {
-    if (sv.empty()) return 0;
-    int32_t v = 0;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-uint32_t parse_u32(std::string_view sv) noexcept {
-    if (sv.empty()) return 0u;
-    uint32_t v = 0u;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
-    return v;
-}
-char parse_char(std::string_view sv) noexcept {
-    return sv.empty() ? '\0' : sv[0];
-}
 
 // Añade un miembro al builder. is_key=true solo para device_id.
 //
