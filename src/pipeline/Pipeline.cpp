@@ -14,12 +14,14 @@
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
 #include <fastdds/dds/topic/Topic.hpp>
 #include <fastdds/dds/topic/TypeSupport.hpp>
-#include <fastdds/dds/xtypes/dynamic_types/DynamicDataFactory.hpp>
-#include <fastdds/dds/xtypes/dynamic_types/DynamicPubSubType.hpp>
+// Nada de XTypes aparece ya aqui: la construccion de tipos y la creacion de
+// muestras viven detras del seam, en DynamicTypeBackend. Que este fichero ya no
+// necesite esas cabeceras es la senal de que el brazo quedo bien encapsulado.
 
 #include "mapper/Mapper.hpp"
 #include "parser/Parser.hpp"
 #include "pipeline/PublishPlan.hpp"
+#include "publish/DynamicTypeBackend.hpp"
 
 namespace nmea {
 
@@ -33,7 +35,6 @@ struct DdsCtx {
         Topic*                    topic{nullptr};
         DataWriter*               writer{nullptr};
         TypeSupport               ts;
-        DynamicType::_ref_type    dyn_type;  // retiene el tipo vivo (D6)
         Pipeline::QosSettings     qos{};     // QoS con la que se creó el writer
     };
 
@@ -70,8 +71,10 @@ struct DdsCtx {
         return (it != writers.end()) ? &it->second : nullptr;
     }
 
-    // Obtiene o crea el DataWriter para el formatter dado.
-    DataWriter* get_or_create(const Mapper& mapper,
+    // Obtiene o crea el DataWriter para el formatter dado. De dónde sale el
+    // TypeSupport es lo único que distingue a los dos brazos aquí; el resto de
+    // esta función es común y por eso no está duplicada (ver ITypeBackend.hpp).
+    DataWriter* get_or_create(ITypeBackend& backend,
                               const Mapper::SentenceInfo& info,
                               const Pipeline::QosSettings& wqos) {
         const std::string key = info.formatter.empty() ? "raw" : info.formatter;
@@ -90,20 +93,15 @@ struct DdsCtx {
             writers.erase(it);
         }
 
-        DynamicType::_ref_type dyn_type = info.formatter.empty()
-                ? mapper.raw_sentence_type()
-                : mapper.type_for(info.formatter);
-
-        // TypeSupport toma ownership compartido (es un shared_ptr).
         // device_id es @key (D3/D5): dejamos que Fast DDS compute la clave de
         // instancia. (El SEGV histórico era por pasar data.get() a write() en vez
         // de &data, no por el key — ya corregido.)
-        TypeSupport ts(new DynamicPubSubType(dyn_type));
+        TypeSupport ts;
+        if (!backend.prepare(info, ts)) return nullptr;
         participant->register_type(ts, info.type_name);
 
         WriterEntry entry;
         entry.ts       = ts;
-        entry.dyn_type = dyn_type;  // mantiene el DynamicType vivo
         entry.qos      = wqos;      // recuerda la QoS para detectar cambios
         entry.topic  = participant->create_topic(
                 info.topic_name, info.type_name, TOPIC_QOS_DEFAULT);
@@ -195,6 +193,11 @@ void Pipeline::worker_loop() {
     Mapper mapper(*cfg_.registry);
     Parser parser;
 
+    // El seam de RQ1. Hoy solo existe el brazo dinámico; el generado se enchufa
+    // aquí y en ningún otro sitio.
+    DynamicTypeBackend dynamic_backend(mapper);
+    ITypeBackend& backend = dynamic_backend;
+
     // Última allowlist reconciliada. Vacía al arrancar, así que la primera
     // iteración con un plan no vacío reconcilia y las siguientes no.
     std::vector<std::string> last_active;
@@ -250,44 +253,20 @@ void Pipeline::worker_loop() {
                         // Las sentencias raw (sin formatter) no son convertibles en modo selectivo.
                         if (!info.formatter.empty()) {
                             if (auto tgt = cfg_.plan->resolve(talker, info.formatter)) {
-                                DataWriter* w = ctx.get_or_create(mapper, info, tgt->qos);
+                                DataWriter* w = ctx.get_or_create(backend, info, tgt->qos);
                                 if (w) {
-                                    auto* entry = ctx.get_entry(info.formatter);
-                                    if (entry) {
-                                        auto data = DynamicDataFactory::get_instance()
-                                                ->create_data(entry->dyn_type);
-                                        if (data) {
-                                            // info.formatter ya está resuelto: no
-                                            // se vuelve a resolver dentro (§8.6.1).
-                                            mapper.populate(data, sv, tgt->device_id,
-                                                            info.formatter, 0);
-                                            w->write(&data);
-                                            // Fin de la región: retorno de write().
-                                            if (cfg_.probe)
-                                                cfg_.probe->record(t0, info.formatter);
-                                        }
-                                    }
+                                    backend.write(w, info, sv, tgt->device_id, 0);
+                                    // Fin de la region cronometrada: retorno de write().
+                                    if (cfg_.probe) cfg_.probe->record(t0, info.formatter);
                                 }
                             }
                         }
                     } else {
                         // Modo legacy: publica todo con device_id/qos globales.
-                        DataWriter* w = ctx.get_or_create(mapper, info, cfg_.qos);
+                        DataWriter* w = ctx.get_or_create(backend, info, cfg_.qos);
                         if (w) {
-                            const std::string ekey =
-                                    info.formatter.empty() ? "raw" : info.formatter;
-                            auto* entry = ctx.get_entry(ekey);
-                            if (entry) {
-                                auto data = DynamicDataFactory::get_instance()
-                                        ->create_data(entry->dyn_type);
-                                if (data) {
-                                    mapper.populate(data, sv, cfg_.device_id,
-                                                    info.formatter, 0);
-                                    w->write(&data);
-                                    if (cfg_.probe)
-                                        cfg_.probe->record(t0, info.formatter);
-                                }
-                            }
+                            backend.write(w, info, sv, cfg_.device_id, 0);
+                            if (cfg_.probe) cfg_.probe->record(t0, info.formatter);
                         }
                     }
                 }
