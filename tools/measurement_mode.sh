@@ -67,6 +67,39 @@ set_turbo() {   # $1 = on|off
     fi
 }
 
+# Estados C de inactividad.
+#
+# El gobernador `performance` NO basta. Medido en arc-cednav: con el gobernador
+# en performance y el turbo apagado, un nucleo ocupado marca 2400 MHz y uno
+# ocioso baja a 445. El esquema anula la corrida si la frecuencia media se
+# desvia mas del 1 % del nominal, asi que TODA corrida de carga baja --la
+# normativa ofrece seis sentencias por segundo y deja casi todo ocioso-- se
+# anularia por inactividad y no por throttling, que es justo lo que ese
+# criterio NO quiere decir.
+#
+# Desactivando los estados de inactividad los nucleos se quedan en 2399-2400 MHz
+# aunque no tengan trabajo, y entonces una desviacion significa de verdad que el
+# procesador bajo la frecuencia.
+#
+# Cuesta consumo y calor, y por eso `off` los vuelve a activar.
+set_cstates() {   # $1 = on|off  (on = estados permitidos, o sea modo normal)
+    local want; [ "$1" = off ] && want=1 || want=0
+    for s in /sys/devices/system/cpu/cpu*/cpuidle/state[1-9]; do
+        [ -f "$s/disable" ] && echo "$want" | sudo tee "$s/disable" >/dev/null 2>&1
+    done
+}
+
+cstates_state() {
+    local d=0 total=0
+    for s in /sys/devices/system/cpu/cpu*/cpuidle/state[1-9]; do
+        [ -f "$s/disable" ] || continue
+        total=$((total + 1))
+        [ "$(cat "$s/disable")" = "1" ] && d=$((d + 1))
+    done
+    [ "$total" = 0 ] && { echo "no-controlables"; return; }
+    [ "$d" = "$total" ] && echo apagados || echo "encendidos ($d/$total apagados)"
+}
+
 # Temperatura desde sysfs y no desde `sensors`. En arc-cednav el modulo
 # coretemp no esta cargado, asi que `sensors` no expone la temperatura del
 # paquete de CPU y un parseo de su salida devuelve el umbral de otro sensor.
@@ -95,6 +128,7 @@ on_ac_power() {
 report() {
     echo "  gobernador : $(governors)"
     echo "  turbo      : $(turbo_state)"
+    echo "  estados C  : $(cstates_state)"
     echo "  isolcpus   : $(isolcpus_state)"
     echo "  nucleos    : $(nproc) en linea"
     echo "  temp CPU   : $(cpu_temp_c) C"
@@ -118,6 +152,14 @@ check() {
     else
         echo "  ok     turbo $t"
     fi
+    local cs; cs=$(cstates_state)
+    if [ "$cs" != apagados ] && [ "$cs" != no-controlables ]; then
+        echo "  FALLA  estados C activos ($cs): un nucleo ocioso baja a ~445 MHz y"
+        echo "         la desviacion de frecuencia anularia toda corrida de carga baja"; ok=1
+    else
+        echo "  ok     estados C $cs"
+    fi
+
     local ac; ac=$(on_ac_power)
     if [ "$ac" = "NO" ]; then
         echo "  FALLA  el host corre con bateria; hara throttling y las corridas no"
@@ -140,11 +182,13 @@ case "${1:-status}" in
     on)
         set_governor performance
         set_turbo off
+        set_cstates off
         echo "modo medicion ACTIVADO"; report; echo; check || true
         ;;
     off)
         set_governor "$(default_governor)"
         set_turbo on
+        set_cstates on
         echo "modo medicion DESACTIVADO (estado normal)"; report
         ;;
     status)

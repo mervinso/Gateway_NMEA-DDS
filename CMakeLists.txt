@@ -277,6 +277,12 @@ option(GATEWAY_INSTRUMENT "Instrumentar la ruta de publicación para RQ1" OFF)
 if(GATEWAY_INSTRUMENT)
     target_compile_definitions(nmea_pipeline PUBLIC GATEWAY_INSTRUMENT)
     message(STATUS "Instrumentación de la ruta de publicación: ACTIVADA")
+    add_executable(measurement_run tools/measurement_run.cpp)
+    target_include_directories(measurement_run PRIVATE src)
+    target_link_libraries(measurement_run PRIVATE
+        nmea_pipeline nmea_mapper nmea_registry nmea_capture nmea_parser fastdds)
+    target_compile_options(measurement_run PRIVATE -Wall -Wextra)
+
     add_executable(instrument_selftest tools/instrument_selftest.cpp)
     target_include_directories(instrument_selftest PRIVATE src)
     target_link_libraries(instrument_selftest PRIVATE
