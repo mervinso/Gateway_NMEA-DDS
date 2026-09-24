@@ -167,6 +167,87 @@ std::string emit_populate_file(const Registry& reg, const std::vector<std::strin
     return o;
 }
 
+constexpr const char* DISPATCH_HEADER = R"(// GENERADO POR tools/idl_from_registry -- NO EDITAR A MANO.
+//
+// Despacho del brazo generado. Cada tipo de fastddsgen es una clase C++
+// distinta, asi que el Pipeline no puede tratarlos uniformemente sin borrar el
+// tipo. Esto emite una clase por formatter detras de una interfaz comun, y una
+// fabrica que devuelve la que toque.
+//
+// El backend estatico cachea una instancia por formatter, asi que la fabrica se
+// llama una vez por tipo y no una vez por sentencia.
+//
+// La muestra se declara **en la pila**. Es el punto del brazo generado: §8.4
+// describe la asignacion en heap por sentencia como uno de los costos del brazo
+// dinamico, y un tipo generado de IDL da una estructura que el compilador puede
+// colocar en la pila.
+
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string_view>
+
+#include <fastdds/dds/publisher/DataWriter.hpp>
+#include <fastdds/dds/topic/TypeSupport.hpp>
+
+#include "parser/Parser.hpp"
+
+)";
+
+std::string emit_dispatch(const Registry& reg, const std::vector<std::string>& wanted) {
+    std::string o = DISPATCH_HEADER;
+    o += "#include \"NmeaStaticPopulate.hpp\"\n";
+    for (const std::string& f : wanted) o += "#include \"Nmea" + f + "PubSubTypes.hpp\"\n";
+    o += R"(
+namespace nmea {
+
+// Interfaz con el tipo borrado. Una implementacion por formatter, generada.
+class IStaticType {
+public:
+    virtual ~IStaticType() = default;
+
+    // TypeSupport del tipo generado, para register_type().
+    virtual eprosima::fastdds::dds::TypeSupport type_support() const = 0;
+
+    // Puebla una muestra en la pila y la escribe. Devuelve false si write fallo.
+    virtual bool write(eprosima::fastdds::dds::DataWriter* w,
+                       const SentenceView& v,
+                       std::string_view device_id,
+                       std::string_view talker,
+                       std::int64_t recv_ns) const = 0;
+};
+
+)";
+    for (const std::string& f : wanted) {
+        const std::string n = "Nmea" + f;
+        o += "class StaticType" + f + " final : public IStaticType {\n";
+        o += "public:\n";
+        o += "    eprosima::fastdds::dds::TypeSupport type_support() const override {\n";
+        o += "        return eprosima::fastdds::dds::TypeSupport(new " + n + "PubSubType());\n";
+        o += "    }\n";
+        o += "    bool write(eprosima::fastdds::dds::DataWriter* w,\n";
+        o += "               const SentenceView& v,\n";
+        o += "               std::string_view device_id,\n";
+        o += "               std::string_view talker,\n";
+        o += "               std::int64_t recv_ns) const override {\n";
+        o += "        " + n + " s;   // en la pila, no en el heap\n";
+        o += "        populate_static(s, v, device_id, talker, recv_ns);\n";
+        o += "        return w->write(&s) == eprosima::fastdds::dds::RETCODE_OK;\n";
+        o += "    }\n";
+        o += "};\n\n";
+    }
+    o += "// Devuelve nullptr si el formatter no tiene tipo generado. El brazo\n";
+    o += "// estatico solo cubre los formatters de la campana; el resto no es\n";
+    o += "// publicable por esta via y el llamante debe decirlo, no callarlo.\n";
+    o += "inline std::unique_ptr<IStaticType> make_static_type(std::string_view formatter) {\n";
+    for (const std::string& f : wanted)
+        o += "    if (formatter == \"" + f + "\") return std::make_unique<StaticType" + f + ">();\n";
+    o += "    return nullptr;\n}\n\n";
+    o += "}  // namespace nmea\n";
+    return o;
+}
+
 std::string read_file(const std::filesystem::path& p) {
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
@@ -246,6 +327,28 @@ int main(int argc, char** argv) {
             o << text;
             std::printf("  %-14s %2zu funciones -> %s\n", "poblado", wanted.size(),
                         path.c_str());
+        }
+    }
+
+    // El despacho con tipo borrado, de la misma fuente.
+    {
+        const std::string text = emit_dispatch(reg, wanted);
+        const std::filesystem::path path = dir / "NmeaStaticDispatch.hpp";
+        if (check) {
+            const std::string on_disk = read_file(path);
+            if (on_disk.empty()) {
+                std::printf("  FALTA      %s\n", path.c_str()); ++stale;
+            } else if (on_disk != text) {
+                std::printf("  DESFASADO  %s -- el registro cambio y el despacho no\n",
+                            path.c_str()); ++stale;
+            } else {
+                std::printf("  ok         %s\n", path.c_str());
+            }
+        } else {
+            std::ofstream o(path, std::ios::binary);
+            if (!o) { std::fprintf(stderr, "no se pudo escribir %s\n", path.c_str()); return 1; }
+            o << text;
+            std::printf("  %-14s %2zu clases -> %s\n", "despacho", wanted.size(), path.c_str());
         }
     }
 
