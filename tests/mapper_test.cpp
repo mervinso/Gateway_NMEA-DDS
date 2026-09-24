@@ -134,11 +134,54 @@ TEST(Mapper, TypeForSameFormatterReturnsCachedType) {
     EXPECT_EQ(t1.get(), t2.get());
 }
 
-TEST(Mapper, EmptyFieldDefaultsToZero) {
+// --------------------------------------------------------------------------
+// §8.5.3 exige que un campo vacio quede AUSENTE y no en cero. El tipo lo
+// declara —los campos de sensor llevan is_optional— pero Fast DDS 3.6.2 no lo
+// honra en el dato: un miembro opcional de un DynamicData se codifica siempre,
+// lo hayan puesto, no tocado o limpiado con clear_value(). Verificado byte a
+// byte con XCDR2 en las tres extensibilidades: los payloads son identicos.
+//
+// Este test fija esa limitacion en vez de fingir que la regla esta implementada.
+// Si una version futura de Fast DDS empieza a honrar la opcionalidad, este test
+// falla y alguien se entera, que es justo lo que debe pasar: de ello depende la
+// compuerta de equivalencia CDR entre el brazo dinamico y el generado.
+// --------------------------------------------------------------------------
+TEST(Mapper, SensorFieldsAreDeclaredOptionalInTheType) {
+    const Registry reg = Registry::builtin();
+    const Mapper mapper(reg);
+    const DynamicType::_ref_type type = mapper.type_for("GGA");
+    ASSERT_NE(type, nullptr);
+
+    DynamicTypeMembersByName members;
+    ASSERT_EQ(type->get_all_members_by_name(members), RETCODE_OK);
+
+    auto is_optional = [&](const char* name) {
+        auto it = members.find(name);
+        EXPECT_NE(it, members.end()) << name;
+        if (it == members.end()) return false;
+        MemberDescriptor::_ref_type d = traits<MemberDescriptor>::make_shared();
+        it->second->get_descriptor(d);
+        return d->is_optional();
+    };
+
+    // Los tres miembros de cabecera NO son opcionales: una muestra sin identidad
+    // de dispositivo o sin marca de recepcion no tiene con que ser clavada.
+    EXPECT_FALSE(is_optional("device_id"));
+    EXPECT_FALSE(is_optional("talker"));
+    EXPECT_FALSE(is_optional("recv_timestamp"));
+
+    // Todo campo de sensor si lo es.
+    EXPECT_TRUE(is_optional("altitude"));
+    EXPECT_TRUE(is_optional("dgps_age"));
+}
+
+TEST(Mapper, EmptyFieldReadsAsZeroBecauseDynamicDataCannotExpressAbsence) {
     const Registry reg = Registry::builtin();
     const Mapper mapper(reg);
 
-    // GGA con dgps_age vacío (campo 12, índice 12) → debe ser 0.0.
+    // GGA con dgps_age vacio (campo 12). populate() ya NO lo convierte: lo deja
+    // sin poner. Aun asi se lee 0.0, porque create_data() materializa el default
+    // de todo miembro y la opcionalidad no llega al dato.
     Parsed p("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
     ASSERT_EQ(p.result, ParseResult::Complete);
 
@@ -146,10 +189,16 @@ TEST(Mapper, EmptyFieldDefaultsToZero) {
     ASSERT_NE(data, nullptr);
 
     double dgps_age = 99.0;
-    MemberId mid = data->get_member_id_by_name("dgps_age");
+    const MemberId mid = data->get_member_id_by_name("dgps_age");
     ASSERT_NE(mid, MEMBER_ID_INVALID);
     EXPECT_EQ(data->get_float64_value(dgps_age, mid), RETCODE_OK);
-    EXPECT_DOUBLE_EQ(dgps_age, 0.0);
+
+    // Si esto alguna vez deja de ser 0.0 —o el retcode deja de ser OK— es que la
+    // opcionalidad empezo a honrarse, y entonces la regla de §8.5.3 SI esta
+    // implementada en el brazo dinamico y hay que revisar la compuerta CDR.
+    EXPECT_DOUBLE_EQ(dgps_age, 0.0)
+            << "Fast DDS empezo a honrar is_optional en DynamicData: revisar §8.5.3, "
+               "la compuerta de equivalencia CDR y el brazo estatico";
 }
 
 TEST(Mapper, ResolveExposesTalker) {

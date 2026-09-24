@@ -64,6 +64,12 @@ TypeKind to_kind(FieldType ft) {
 }
 
 // Parseo sin locale ni excepciones para campos de wire.
+//
+// Desde §8.5.3 populate() nunca les pasa una cadena vacía: un campo vacío se
+// deja sin poner en vez de convertirse. Las guardas de abajo se conservan
+// porque estos helpers son alcanzables desde otros llamadores, pero devolver
+// cero para una cadena vacía ya no es el camino por el que pasa una sentencia
+// con un campo nulo.
 double parse_f64(std::string_view sv) noexcept {
     if (sv.empty()) return 0.0;
     double v = 0.0;
@@ -87,14 +93,23 @@ char parse_char(std::string_view sv) noexcept {
 }
 
 // Añade un miembro al builder. is_key=true solo para device_id.
+//
+// is_optional=true para todo campo de sensor (tesis §8.5.3). IEC 61162-1 permite
+// transmitir un campo vacío cuando el dato no está disponible, y un campo vacío
+// es semánticamente distinto de un campo cuyo valor resulta ser cero: una
+// profundidad no disponible no es una profundidad de cero metros. Un miembro
+// opcional deja al suscriptor preguntar si el dato está, sin tener que conocer
+// un valor centinela.
 void add_member(DynamicTypeBuilder::_ref_type& builder,
                 std::string_view name,
                 DynamicType::_ref_type type,
-                bool is_key = false) {
+                bool is_key = false,
+                bool is_optional = false) {
     auto desc = traits<MemberDescriptor>::make_shared();
     desc->name(std::string(name));
     desc->type(type);
     desc->is_key(is_key);
+    desc->is_optional(is_optional);
     builder->add_member(desc);
 }
 
@@ -144,12 +159,14 @@ DynamicType::_ref_type Mapper::build_type(const SentenceDef& def) const {
 
     add_common_header(builder);
 
+    // Los tres miembros de cabecera que añade add_common_header() NO son
+    // opcionales: una muestra sin identidad de dispositivo o sin marca de
+    // recepción no tiene con qué ser clavada ni ordenada (§8.5.3).
     for (const auto& field : def.fields) {
-        if (field.type == FieldType::String) {
-            add_member(builder, field.name, string_type());
-        } else {
-            add_member(builder, field.name, primitive(to_kind(field.type)));
-        }
+        const DynamicType::_ref_type type = field.type == FieldType::String
+                ? string_type()
+                : primitive(to_kind(field.type));
+        add_member(builder, field.name, type, /*is_key=*/false, /*is_optional=*/true);
     }
     return builder->build();
 }
@@ -217,10 +234,18 @@ void Mapper::populate(DynamicData::_ref_type& data,
         return;
     }
 
+    // §8.5.3, la regla completa: un campo recibido con contenido se pone; uno
+    // recibido vacío se deja sin poner; y uno que no llegó —porque la sentencia
+    // traía menos campos de los que su definición declara— también se deja sin
+    // poner. El `std::min` de abajo es lo que produce ese tercer caso, y bajo
+    // esta regla deja de ser un defecto de truncamiento para ser el
+    // comportamiento correcto: un campo que no llegó es exactamente un campo
+    // que no está presente.
     const std::size_t n = std::min(view.fields.size(), def->fields.size());
     for (std::size_t i = 0; i < n; ++i) {
         const auto& fd  = def->fields[i];
         const auto  sv  = view.fields[i];
+        if (sv.empty()) continue;   // ausente se queda ausente, no pasa a cero
         const MemberId mid = data->get_member_id_by_name(fd.name);
         if (mid == MEMBER_ID_INVALID) continue;
         switch (fd.type) {
