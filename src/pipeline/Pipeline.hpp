@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -40,8 +42,28 @@ public:
     // equivocado.
     enum class Typing { Dynamic, Static };
 
+    // Política de transportes.
+    //
+    // `Builtin` deja los que Fast DDS elija, que es el comportamiento de
+    // siempre y el que la operación normal quiere.
+    //
+    // `Udpv4Only` los configura **explícitamente** en el QoS del participante.
+    // El diseño de medición exige UDPv4 sin memoria compartida, y `v3_transport`
+    // es criterio de anulación de corrida — pero la variable de entorno
+    // `FASTDDS_BUILTIN_TRANSPORTS` **no se refleja en el QoS**: leerlo de vuelta
+    // devuelve `use_builtin_transports = true` y cero transportes de usuario,
+    // se haya exportado o no. Medido, no supuesto.
+    //
+    // Eso importa mas de lo que parece. Con la variable, un olvido produce una
+    // corrida con memoria compartida —anulable por v3— y el manifiesto diria
+    // "UDPv4" igual, porque nadie puede comprobarlo. Configurandolos aqui, el
+    // artefacto los controla y `effective_transports()` los lee de vuelta para
+    // que el manifiesto registre lo que paso y no lo que se pidio.
+    enum class Transports { Builtin, Udpv4Only };
+
     struct Config {
         Typing typing{Typing::Dynamic};
+        Transports transports{Transports::Builtin};
 
         std::string              device_id;    // @key DDS (D3)
         std::unique_ptr<ISource> source;       // propiedad exclusiva (D9)
@@ -75,6 +97,12 @@ public:
                            std::vector<std::string> field_values)> on_sentence;
     };
 
+    // Transportes efectivos del participante, leidos de su QoS despues de
+    // crearlo. Vacio hasta que el hilo trabajador ha creado el participante, y
+    // vacio siempre si `publish_to_dds` es false. Lo consume el emisor del
+    // manifiesto de corrida (obligacion 4b).
+    std::vector<std::string> effective_transports() const;
+
     explicit Pipeline(Config cfg);
     ~Pipeline();
 
@@ -91,6 +119,10 @@ public:
     uint64_t sentences_err() const noexcept { return err_.load(std::memory_order_relaxed); }
 
 private:
+    // Escrito una sola vez por el hilo trabajador antes de senalar Running,
+    // y solo leido despues. El mutex es barato y ocurre una vez por corrida.
+    mutable std::mutex           transports_mtx_;
+    std::vector<std::string>     transports_;
     void worker_loop();
 
     Config                cfg_;

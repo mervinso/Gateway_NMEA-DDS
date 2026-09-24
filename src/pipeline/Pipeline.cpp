@@ -3,12 +3,16 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
+#include <fastdds/dds/domain/qos/DomainParticipantQos.hpp>
+#include <fastdds/rtps/transport/UDPv4TransportDescriptor.hpp>
+#include <fastdds/rtps/transport/shared_mem/SharedMemTransportDescriptor.hpp>
 #include <fastdds/dds/publisher/DataWriter.hpp>
 #include <fastdds/dds/publisher/Publisher.hpp>
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
@@ -150,6 +154,11 @@ struct DdsCtx {
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
+std::vector<std::string> Pipeline::effective_transports() const {
+    std::lock_guard<std::mutex> lk(transports_mtx_);
+    return transports_;
+}
+
 Pipeline::Pipeline(Config cfg) : cfg_(std::move(cfg)) {}
 
 Pipeline::~Pipeline() { stop(); }
@@ -177,13 +186,40 @@ void Pipeline::worker_loop() {
     // ── DDS setup ──────────────────────────────────────────────────────────
     DdsCtx ctx;
     if (cfg_.publish_to_dds) {
+        DomainParticipantQos pqos = PARTICIPANT_QOS_DEFAULT;
+        if (cfg_.transports == Transports::Udpv4Only) {
+            // Explicitos, no por variable de entorno: ver Pipeline.hpp.
+            pqos.transport().use_builtin_transports = false;
+            pqos.transport().user_transports.push_back(
+                    std::make_shared<eprosima::fastdds::rtps::UDPv4TransportDescriptor>());
+        }
         ctx.participant = DomainParticipantFactory::get_instance()
-                ->create_participant(cfg_.domain_id, PARTICIPANT_QOS_DEFAULT);
+                ->create_participant(cfg_.domain_id, pqos);
         if (!ctx.participant) {
             error_msg_ = "DDS: failed to create DomainParticipant";
             state_.store(State::Error, std::memory_order_release);
             return;
         }
+        // Leer de vuelta lo que el participante tiene de verdad, para que el
+        // manifiesto registre lo que paso y no lo que se pidio.
+        {
+            std::vector<std::string> names;
+            const auto& tr = ctx.participant->get_qos().transport();
+            for (const auto& d : tr.user_transports) {
+                if (std::dynamic_pointer_cast<
+                            eprosima::fastdds::rtps::UDPv4TransportDescriptor>(d))
+                    names.emplace_back("UDPv4");
+                else if (std::dynamic_pointer_cast<
+                                 eprosima::fastdds::rtps::SharedMemTransportDescriptor>(d))
+                    names.emplace_back("SHM");
+                else
+                    names.emplace_back("other");
+            }
+            if (tr.use_builtin_transports) names.emplace_back("builtin");
+            std::lock_guard<std::mutex> lk(transports_mtx_);
+            transports_ = std::move(names);
+        }
+
         ctx.publisher = ctx.participant->create_publisher(PUBLISHER_QOS_DEFAULT);
         if (!ctx.publisher) {
             ctx.cleanup();
