@@ -4,6 +4,12 @@
 #include "parser/Parser.hpp"
 #include "registry/Registry.hpp"
 
+#include <fastdds/dds/xtypes/dynamic_types/DynamicData.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicDataFactory.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicType.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/DynamicTypeMember.hpp>
+#include <fastdds/dds/xtypes/dynamic_types/MemberDescriptor.hpp>
+
 using namespace nmea;
 using namespace eprosima::fastdds::dds;
 
@@ -163,4 +169,79 @@ TEST(Mapper, ResolveExposesTalker) {
     auto raw = mapper.resolve("ZZZZZ");
     EXPECT_EQ(raw.formatter, "");
     EXPECT_EQ(raw.talker,    "");
+}
+
+// --------------------------------------------------------------------------
+// §8.6.1: el Pipeline ya tiene el formatter resuelto cuando llama a populate(),
+// así que existe una sobrecarga que lo recibe en vez de recalcularlo. Ese
+// recálculo caía dentro de la región cronometrada.
+//
+// La sobrecarga solo vale si produce exactamente lo mismo. Comprobarlo sobre
+// una sentencia estándar, una propietaria y una desconocida: los tres caminos
+// que resolve_formatter() distingue, incluido el que devuelve cadena vacía.
+// --------------------------------------------------------------------------
+namespace {
+std::string dump_members(const DynamicType::_ref_type& type,
+                         const DynamicData::_ref_type& data) {
+    std::string out;
+    DynamicTypeMembersById members;
+    type->get_all_members(members);
+    for (auto& [id, member] : members) {
+        MemberDescriptor::_ref_type desc = traits<MemberDescriptor>::make_shared();
+        member->get_descriptor(desc);
+        const TypeKind kind = desc->type() ? desc->type()->get_kind() : TK_NONE;
+        std::string val;
+        switch (kind) {
+            case TK_STRING8: { std::string s; data->get_string_value(s, id); val = s; break; }
+            case TK_FLOAT64: { double v{}; data->get_float64_value(v, id); val = std::to_string(v); break; }
+            case TK_FLOAT32: { float v{};  data->get_float32_value(v, id);  val = std::to_string(v); break; }
+            case TK_INT32:   { int32_t v{};  data->get_int32_value(v, id);  val = std::to_string(v); break; }
+            case TK_UINT32:  { uint32_t v{}; data->get_uint32_value(v, id); val = std::to_string(v); break; }
+            case TK_INT64:   { int64_t v{};  data->get_int64_value(v, id);  val = std::to_string(v); break; }
+            case TK_CHAR8:   { char v{};     data->get_char8_value(v, id);  val = std::string(1, v); break; }
+            default: val = "?";
+        }
+        out += std::string(desc->name()) + "=" + val + ";";
+    }
+    return out;
+}
+}  // namespace
+
+TEST(Mapper, PopulateWithResolvedFormatterMatchesTheResolvingForm) {
+    const Registry reg = Registry::builtin();
+    const Mapper mapper(reg);
+
+    // Un recv_ns fijo: con 0 cada llamada tomaría el reloj del sistema y los dos
+    // volcados diferirían en el timestamp por razones que no son el cambio.
+    const int64_t recv_ns = 1'700'000'000'000'000'000LL;
+
+    struct Case { const char* label; const char* sentence; };
+    const Case cases[] = {
+        {"estandar",    "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n"},
+        // Sentencias tomadas de las fixtures que ya usan los otros tests de
+        // este archivo. Un checksum inventado a mano falla el parser, y el
+        // test acabaria probando el parser en vez de la sobrecarga.
+        {"propietaria", "$VNYMR,-165.918,-008.770,+000.198*7D\r\n"},
+        {"desconocida", "$PXYZ,foo,bar,42*36\r\n"},
+    };
+
+    for (const auto& c : cases) {
+        Parsed p(c.sentence);
+        ASSERT_EQ(p.result, ParseResult::Complete) << c.label;
+
+        const auto info = mapper.resolve(p.view().address);
+        const DynamicType::_ref_type type =
+                info.formatter.empty() ? mapper.raw_sentence_type()
+                                       : mapper.type_for(info.formatter);
+
+        auto a = DynamicDataFactory::get_instance()->create_data(type);
+        auto b = DynamicDataFactory::get_instance()->create_data(type);
+        ASSERT_TRUE(a && b) << c.label;
+
+        mapper.populate(a, p.view(), "dev-1", recv_ns);                    // resuelve dentro
+        mapper.populate(b, p.view(), "dev-1", info.formatter, recv_ns);    // ya resuelto
+
+        EXPECT_EQ(dump_members(type, a), dump_members(type, b))
+                << "la sobrecarga difiere de la forma que resuelve, caso: " << c.label;
+    }
 }

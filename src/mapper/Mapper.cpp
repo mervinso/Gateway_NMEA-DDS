@@ -180,6 +180,20 @@ void Mapper::populate(DynamicData::_ref_type& data,
     }
 
     const std::string formatter = resolve_formatter(view.address);
+    populate(data, view, device_id, formatter, recv_ns);
+}
+
+void Mapper::populate(DynamicData::_ref_type& data,
+                      const SentenceView& view,
+                      std::string_view device_id,
+                      std::string_view formatter_sv,
+                      int64_t recv_ns) const {
+    if (recv_ns == 0) {
+        recv_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    const std::string formatter(formatter_sv);
     const SentenceDef* def = formatter.empty() ? nullptr : registry_.lookup(formatter);
 
     std::string talker;
@@ -227,7 +241,7 @@ DynamicData::_ref_type Mapper::map(const SentenceView& view,
     DynamicType::_ref_type dyn_type = def ? type_for(formatter) : raw_sentence_type();
     DynamicData::_ref_type data =
             DynamicDataFactory::get_instance()->create_data(dyn_type);
-    populate(data, view, device_id, recv_ns);
+    populate(data, view, device_id, formatter, recv_ns);
     return data;
 }
 

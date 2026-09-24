@@ -43,10 +43,25 @@ public:
     // Puebla un DynamicData ya creado con los valores de la sentencia + device_id.
     // Útil cuando el DynamicData fue creado externamente (Pipeline) para controlar
     // el ciclo de vida del DynamicType. recv_ns = 0 usa el reloj del sistema.
+    //
+    // Esta forma resuelve el formatter a partir del address. El Pipeline ya lo
+    // tiene resuelto cuando llega aquí, así que usa la sobrecarga de abajo: el
+    // formatter se resolvía dos veces por sentencia, y esa segunda resolución
+    // cae dentro de la región cronometrada (retorno del parser → retorno de
+    // write). Ver tesis §8.6.1.
     void populate(eprosima::fastdds::dds::DynamicData::_ref_type& data,
                   const SentenceView& view,
                   std::string_view device_id,
                   int64_t recv_ns = 0) const;
+
+    // Igual que la anterior, con el formatter ya resuelto por el llamante.
+    // `formatter` vacío significa "desconocido" → se puebla como RawSentence,
+    // exactamente el mismo significado que devuelve resolve_formatter().
+    void populate(eprosima::fastdds::dds::DynamicData::_ref_type& data,
+                  const SentenceView& view,
+                  std::string_view device_id,
+                  std::string_view formatter,
+                  int64_t recv_ns) const;
 
     // Metadatos de una sentencia por su address ("GPGGA", "VNYMR", ...).
     // Usados por el Pipeline para nombrar tópicos y tipos DDS.

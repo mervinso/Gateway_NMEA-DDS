@@ -193,6 +193,10 @@ void Pipeline::worker_loop() {
 
     Mapper mapper(*cfg_.registry);
     Parser parser;
+
+    // Última allowlist reconciliada. Vacía al arrancar, así que la primera
+    // iteración con un plan no vacío reconcilia y las siguientes no.
+    std::vector<std::string> last_active;
     char   buf[256];
 
     // Señalamos Running solo aquí: DDS ya está listo, loop a punto de comenzar.
@@ -247,7 +251,10 @@ void Pipeline::worker_loop() {
                                         auto data = DynamicDataFactory::get_instance()
                                                 ->create_data(entry->dyn_type);
                                         if (data) {
-                                            mapper.populate(data, sv, tgt->device_id);
+                                            // info.formatter ya está resuelto: no
+                                            // se vuelve a resolver dentro (§8.6.1).
+                                            mapper.populate(data, sv, tgt->device_id,
+                                                            info.formatter, 0);
                                             w->write(&data);
                                         }
                                     }
@@ -265,7 +272,8 @@ void Pipeline::worker_loop() {
                                 auto data = DynamicDataFactory::get_instance()
                                         ->create_data(entry->dyn_type);
                                 if (data) {
-                                    mapper.populate(data, sv, cfg_.device_id);
+                                    mapper.populate(data, sv, cfg_.device_id,
+                                                    info.formatter, 0);
                                     w->write(&data);
                                 }
                             }
@@ -276,8 +284,28 @@ void Pipeline::worker_loop() {
                 ++err_;
             }
         }
-        if (cfg_.publish_to_dds && cfg_.plan)
-            ctx.reconcile(cfg_.plan->active_formatters());
+        // Reconciliar solo cuando la allowlist cambia, no una vez por chunk leído.
+        //
+        // reconcile() recorre todos los writers y hace un std::find lineal por
+        // cada uno, así que cuesta O(writers × activos) cada vez. La allowlist
+        // casi nunca cambia: cambia cuando el operador habilita o deshabilita
+        // una trama, no cuando llega un chunk de bytes.
+        //
+        // Matiz sobre §8.6.1, que afirma que los dos costos de esa sección "caen
+        // dentro de la región cronometrada". Para la doble resolución del
+        // formatter es cierto. Para esto no: reconcile() corre *después* del
+        // bucle de sentencias del chunk, fuera del intervalo retorno-del-parser
+        // → retorno-de-write. Se quita igualmente porque consume CPU en el
+        // camino caliente, y eso sí entra en el techo de throughput de H2 y en
+        // la contabilidad de CPU-segundos de RQ3 — pero la razón es esa, no la
+        // que el capítulo da. Anotado para corregir el texto antes del freeze.
+        if (cfg_.publish_to_dds && cfg_.plan) {
+            auto active = cfg_.plan->active_formatters();
+            if (active != last_active) {
+                ctx.reconcile(active);
+                last_active = std::move(active);
+            }
+        }
     }
     state_.store(State::Stopped, std::memory_order_release);
 
