@@ -1,0 +1,16 @@
+// Prueba de paridad: el brazo estatico debe declarar EXACTAMENTE lo mismo que
+// construye el dinamico. Cuatro miembros de cabecera, device_id como @key, y
+// los campos de DBT en el mismo orden y tipo que Registry.cpp.
+struct NmeaDBT {
+    @key string device_id;
+    string talker;
+    long long recv_timestamp;
+    unsigned long field_presence;
+
+    double depth_feet;
+    char   feet_unit;
+    double depth_meters;
+    char   meters_unit;
+    double depth_fathoms;
+    char   fathoms_unit;
+};
