@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "capture/ISource.hpp"
+#include "instrument/PublishProbe.hpp"
 #include "registry/Registry.hpp"
 
 namespace nmea {
@@ -49,6 +50,12 @@ public:
         // publica TODAS las sentencias con device_id/qos globales (modo legacy).
         // Si != nullptr, publica solo lo habilitado, con la clave de cada sensor.
         PublishPlan* plan{nullptr};
+
+        // Sonda de instrumentación (no owned, puede ser nullptr). Con la opción
+        // de build GATEWAY_INSTRUMENT apagada la clase es vacía y todas sus
+        // llamadas desaparecen, así que este puntero no cuesta nada: el binario
+        // medido es el binario publicado salvo un flag (Cap. 8, obligación 4).
+        PublishProbe* probe{nullptr};
 
         // Callback opcional invocado desde el hilo worker por cada sentencia válida.
         // Los strings son copias seguras (no string_view). Puede ser nullptr.

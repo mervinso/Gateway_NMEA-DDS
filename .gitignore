@@ -7,3 +7,7 @@
 
 # Tooling local de agentes
 /.agents/
+
+# Build paralelo con GATEWAY_INSTRUMENT=ON, para comparar contra el build por
+# defecto. No es un artefacto: se regenera con cmake -B build-inst.
+build-inst/

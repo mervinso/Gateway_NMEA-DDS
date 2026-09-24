@@ -206,6 +206,22 @@ target_link_libraries(dds_dynamic_sub PRIVATE fastdds fastcdr)
 
 # Microbenchmark de la Tarea 4 (RQ3): CPU estacionario de P participantes
 # ociosos, para ajustar d en D = d*P(P-1)/2. Barrido: tools/participant_cost_sweep.py.
+# ─────────────────────────────────────────────────────────────────────────────
+# Instrumentación de la ruta de publicación (obligación 4 del Cap. 8).
+# Por defecto OFF: el binario medido debe ser el binario publicado salvo este
+# flag. Con OFF, PublishProbe es una clase vacía y el compilador la elimina.
+# ─────────────────────────────────────────────────────────────────────────────
+option(GATEWAY_INSTRUMENT "Instrumentar la ruta de publicación para RQ1" OFF)
+if(GATEWAY_INSTRUMENT)
+    target_compile_definitions(nmea_pipeline PUBLIC GATEWAY_INSTRUMENT)
+    message(STATUS "Instrumentación de la ruta de publicación: ACTIVADA")
+    add_executable(instrument_selftest tools/instrument_selftest.cpp)
+    target_include_directories(instrument_selftest PRIVATE src)
+    target_link_libraries(instrument_selftest PRIVATE
+        nmea_pipeline nmea_mapper nmea_registry nmea_capture nmea_parser fastdds)
+    target_compile_options(instrument_selftest PRIVATE -Wall -Wextra)
+endif()
+
 add_executable(participant_cost_bench tools/participant_cost_bench.cpp)
 target_link_libraries(participant_cost_bench PRIVATE fastdds)
 target_compile_options(participant_cost_bench PRIVATE -Wall -Wextra)
@@ -335,6 +351,7 @@ file(WRITE "${CMAKE_BINARY_DIR}/gateway_build_manifest.txt"
 "fastdds_dir         = ${fastdds_DIR}\n"
 "fastdds_version     = ${fastdds_VERSION}\n"
 "fastdds_prefix      = ${GATEWAY_FASTDDS_PREFIX}\n"
+"gateway_instrument = ${GATEWAY_INSTRUMENT}\n"
 "ros_bridge_opcion   = ${GATEWAY_ROS_BRIDGE}\n"
 "ros_bridge_activo   = ${GATEWAY_ROS_ENABLED}\n"
 "rclcpp_version      = ${rclcpp_VERSION}\n"

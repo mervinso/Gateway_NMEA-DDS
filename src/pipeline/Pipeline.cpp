@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "pipeline/Pipeline.hpp"
 
 #include <algorithm>
@@ -213,6 +214,11 @@ void Pipeline::worker_loop() {
         for (ssize_t i = 0; i < n; ++i) {
             const ParseResult r = parser.consume(buf[i]);
             if (r == ParseResult::Complete) {
+                // Inicio de la región cronometrada de RQ1: retorno del parser
+                // con una sentencia válida. Con la instrumentación apagada
+                // start() es un cuerpo vacío y esto se compila a nada.
+                const std::int64_t t0 = cfg_.probe ? cfg_.probe->start() : 0;
+                (void)t0;   // sin usar cuando publish_to_dds es false
                 ++ok_;
                 const auto& sv   = parser.sentence();
                 const auto  info = mapper.resolve(sv.address);
@@ -256,6 +262,9 @@ void Pipeline::worker_loop() {
                                             mapper.populate(data, sv, tgt->device_id,
                                                             info.formatter, 0);
                                             w->write(&data);
+                                            // Fin de la región: retorno de write().
+                                            if (cfg_.probe)
+                                                cfg_.probe->record(t0, info.formatter);
                                         }
                                     }
                                 }
@@ -275,6 +284,8 @@ void Pipeline::worker_loop() {
                                     mapper.populate(data, sv, cfg_.device_id,
                                                     info.formatter, 0);
                                     w->write(&data);
+                                    if (cfg_.probe)
+                                        cfg_.probe->record(t0, info.formatter);
                                 }
                             }
                         }
