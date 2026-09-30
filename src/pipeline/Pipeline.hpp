@@ -103,6 +103,23 @@ public:
     // manifiesto de corrida (obligacion 4b).
     std::vector<std::string> effective_transports() const;
 
+    // Protocolo de descubrimiento efectivo, leido del QoS del participante y
+    // normalizado a los tres valores que el esquema del manifiesto admite:
+    // "simple", "static", "server". Vacio mientras no haya participante.
+    //
+    // No se traduce lo que no es. Un `DiscoveryProtocol` fuera de esos tres
+    // --NONE, EXTERNAL-- sale con su propio nombre en minuscula y hace fallar
+    // la validacion del manifiesto. Anular la corrida por `v4_incomplete` es
+    // la respuesta correcta a un descubrimiento que el diseno no contempla;
+    // encajarlo a la fuerza en "simple" lo escondería.
+    std::string effective_discovery() const;
+
+    // Dominio DDS efectivo, preguntado al participante con `get_domain_id()`
+    // en vez de copiado de `Config::domain_id`, por la misma razon que los
+    // transportes: el manifiesto registra lo que paso, no lo que se pidio.
+    // -1 mientras no haya participante, que el esquema rechaza (0-232).
+    int effective_domain_id() const;
+
     explicit Pipeline(Config cfg);
     ~Pipeline();
 
@@ -119,10 +136,12 @@ public:
     uint64_t sentences_err() const noexcept { return err_.load(std::memory_order_relaxed); }
 
 private:
-    // Escrito una sola vez por el hilo trabajador antes de senalar Running,
-    // y solo leido despues. El mutex es barato y ocurre una vez por corrida.
-    mutable std::mutex           transports_mtx_;
+    // Escritos una sola vez por el hilo trabajador antes de senalar Running,
+    // y solo leidos despues. El mutex es barato y ocurre una vez por corrida.
+    mutable std::mutex           readback_mtx_;
     std::vector<std::string>     transports_;
+    std::string                  discovery_;
+    int                          domain_id_{-1};
     void worker_loop();
 
     Config                cfg_;

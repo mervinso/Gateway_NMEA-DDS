@@ -155,8 +155,18 @@ struct DdsCtx {
 // Pipeline
 // ---------------------------------------------------------------------------
 std::vector<std::string> Pipeline::effective_transports() const {
-    std::lock_guard<std::mutex> lk(transports_mtx_);
+    std::lock_guard<std::mutex> lk(readback_mtx_);
     return transports_;
+}
+
+std::string Pipeline::effective_discovery() const {
+    std::lock_guard<std::mutex> lk(readback_mtx_);
+    return discovery_;
+}
+
+int Pipeline::effective_domain_id() const {
+    std::lock_guard<std::mutex> lk(readback_mtx_);
+    return domain_id_;
 }
 
 Pipeline::Pipeline(Config cfg) : cfg_(std::move(cfg)) {}
@@ -216,8 +226,38 @@ void Pipeline::worker_loop() {
                     names.emplace_back("other");
             }
             if (tr.use_builtin_transports) names.emplace_back("builtin");
-            std::lock_guard<std::mutex> lk(transports_mtx_);
+
+            // Descubrimiento, por la misma via y con el mismo criterio. El
+            // PDP y el EDP son dos cosas: SIMPLE es el primero, y el segundo
+            // se pide aparte con `use_STATIC_EndpointDiscoveryProtocol`, que
+            // es lo que el esquema llama "static". Los cuatro papeles del
+            // servidor de descubrimiento se colapsan en "server" porque el
+            // diseno no los distingue y el esquema tampoco.
+            using eprosima::fastdds::rtps::DiscoveryProtocol;
+            const auto& dc = ctx.participant->get_qos()
+                                     .wire_protocol().builtin.discovery_config;
+            std::string disc;
+            switch (dc.discoveryProtocol) {
+                case DiscoveryProtocol::SIMPLE:
+                    disc = dc.use_STATIC_EndpointDiscoveryProtocol ? "static"
+                                                                   : "simple";
+                    break;
+                case DiscoveryProtocol::CLIENT:
+                case DiscoveryProtocol::SERVER:
+                case DiscoveryProtocol::BACKUP:
+                case DiscoveryProtocol::SUPER_CLIENT:
+                    disc = "server";
+                    break;
+                case DiscoveryProtocol::NONE:     disc = "none";     break;
+                case DiscoveryProtocol::EXTERNAL: disc = "external"; break;
+            }
+
+            const int dom = ctx.participant->get_domain_id();
+
+            std::lock_guard<std::mutex> lk(readback_mtx_);
             transports_ = std::move(names);
+            discovery_  = std::move(disc);
+            domain_id_  = dom;
         }
 
         ctx.publisher = ctx.participant->create_publisher(PUBLISHER_QOS_DEFAULT);

@@ -279,8 +279,12 @@ if(GATEWAY_INSTRUMENT)
     message(STATUS "Instrumentación de la ruta de publicación: ACTIVADA")
     add_executable(measurement_run tools/measurement_run.cpp)
     target_include_directories(measurement_run PRIVATE src)
+    # `fastcdr` se enlaza por su cabecera de version: el manifiesto de corrida
+    # declara con que Fast CDR se serializo, y el numero sale de la biblioteca
+    # con la que se compilo, no de una constante escrita a mano.
     target_link_libraries(measurement_run PRIVATE
-        nmea_pipeline nmea_mapper nmea_registry nmea_capture nmea_parser fastdds)
+        nmea_pipeline nmea_mapper nmea_registry nmea_capture nmea_parser
+        fastdds fastcdr)
     target_compile_options(measurement_run PRIVATE -Wall -Wextra)
 
     add_executable(instrument_selftest tools/instrument_selftest.cpp)
